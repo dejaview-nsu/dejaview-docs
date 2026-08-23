@@ -29,10 +29,11 @@
 
 ## Привязка к задачам
 
-Задачи ведём в **GitHub Issues** и на доске **Projects (Kanban)**.
+Задачи ведём в **Redmine**: https://ai.nsu.ru/projects/dejaview
 
-- Ссылайся на задачу в описании PR или в коммите: `feat: ... (#42)`.
-- В описании PR пиши `Closes #42` (или `Fixes #42` для бага) — задача закроется автоматически при merge.
+- В названии ветки указывай номер Redmine-задачи: `feat/17123-audio-search`.
+- В описании Pull Request — ссылку на задачу: `https://ai.nsu.ru/issues/17123`.
+- Не забывай логировать время (Spent time) в Redmine.
 
 ## Pull Request
 
