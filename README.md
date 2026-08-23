@@ -4,6 +4,7 @@
 
 ## Содержание
 
+- [process.md](process.md) — как мы разрабатываем: задачи, доски, ветки, ревью, роли
 - [conventions.md](conventions.md) — git-flow, нейминг коммитов, Definition of Done
 - [architecture.md](architecture.md) — архитектура системы
 - [api/openapi.yaml](api/openapi.yaml) — контракт REST API (OpenAPI)
