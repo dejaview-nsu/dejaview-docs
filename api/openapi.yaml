@@ -1,0 +1,6 @@
+openapi: 3.0.3
+info:
+  title: DejaView API
+  version: 0.0.1
+  description: Черновик контракта API. Заполняется командой backend.
+paths: {}
