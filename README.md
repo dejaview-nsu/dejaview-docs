@@ -1,16 +1,23 @@
 # dejaview-docs
 
-Единый источник правды по договорённостям проекта DejaView: контракты API, архитектура и соглашения команды.
+Договорённости проекта: архитектура, контракты API, процесс работы, соглашения.
 
 ## Содержание
 
-- [process.md](process.md) — как мы разрабатываем: задачи, доски, ветки, ревью, роли
-- [conventions.md](conventions.md) — git-flow, нейминг коммитов, Definition of Done
-- [architecture.md](architecture.md) — архитектура системы
-- [api/openapi.yaml](api/openapi.yaml) — контракт REST API (OpenAPI)
+- [architecture.md](architecture.md): компоненты, хранилища, модели, поток индексации
+- [process.md](process.md): кто заводит задачи, статусы, жизненный цикл, роли
+- [conventions.md](conventions.md): ветки, коммиты, code style, Definition of Done
+- [api/openapi.yaml](api/openapi.yaml): контракт REST API
 
 ## Ссылки
 
-- Проект: https://github.com/dejaview-nsu
+- Задачи и требования: https://ai.nsu.ru/projects/dejaview
+- Архитектура, контракты, соглашения: https://github.com/dejaview-nsu/dejaview-docs
+- Организация: https://github.com/dejaview-nsu
 
-Изменения только через Pull Request с ревью. Правила — в [conventions.md](conventions.md).
+## Как работаем
+
+- Ветка от `main`: `feat/<номер задачи>-<кратко>`, нейминг в `conventions.md`
+- Изменения через Pull Request с ревью, прямой push в `main` закрыт
+- Ревьюер назначается автоматически по CODEOWNERS
+- Время трекается в Redmine, в задачу, а не в требование
