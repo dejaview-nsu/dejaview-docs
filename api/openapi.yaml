@@ -152,6 +152,273 @@ components:
             Описание фильма целиком, null - описания нет. До фрагмента его обрезает frontend под
             свою верстку.
           example: Хакер Нео узнает, что мир вокруг - компьютерная симуляция.
+    # --- #17629: регистрация, вход, сессия, пароль ---
+    AuthUsername:
+      type: string
+      minLength: 3
+      maxLength: 30
+      pattern: '^[A-Za-z0-9_]+$'
+      description: |
+        Имя пользователя (#17148 п. 2.1, #17030 п. 2.1.2): 3-30 символов, латинские буквы, цифры
+        и `_`, уникально в системе. Уникальность без учета регистра (допущение).
+
+        Ошибки, code `AUTH_VALIDATION_ERROR`, field `username` (#17148 п. 2.3):
+        - пусто - «Введите имя пользователя»;
+        - короче 3 символов - «Имя пользователя должно содержать не менее 3 символов»;
+        - длиннее 30 символов - «Имя пользователя должно содержать не более 30 символов»;
+        - другие символы - «Имя пользователя может содержать только латинские буквы, цифры и
+          нижнее подчёркивание».
+
+        Занято - `409 AUTH_USERNAME_TAKEN` (#17148 п. 2.4).
+      example: movie_fan_42
+    AuthEmail:
+      type: string
+      format: email
+      maxLength: 254
+      description: |
+        Email (#17148 п. 2.1): формат RFC 5322, уникален в системе. Сравнивается без учета
+        регистра (допущение). Не длиннее 254 символов - предел адреса в RFC 5321 (допущение).
+
+        Ошибки, code `AUTH_VALIDATION_ERROR`, field `email` (#17148 п. 2.3):
+        - пусто - «Введите email»;
+        - неверный формат или длина - «Введите корректный email».
+
+        Занят - `409 AUTH_EMAIL_TAKEN` (#17148 п. 2.4).
+      example: ivan@example.com
+    AuthBirthYear:
+      type: integer
+      minimum: 1900
+      description: |
+        Год рождения, YYYY (#17148 п. 2.1). Верхняя граница - текущий год: она меняется, поэтому
+        в схеме ее нет, ее проверяет сервер.
+
+        Клиент проверяет по #17148 п. 2.3:
+        - пусто - «Укажите год рождения»;
+        - не 4 цифры - «Введите год рождения в формате YYYY»;
+        - меньше 1900 - «Введите корректный год рождения»;
+        - больше текущего - «Год рождения не может быть больше текущего года».
+
+        Сервер на любое нарушение отвечает `400 AUTH_BIRTH_YEAR_INVALID`, field `birth_year`,
+        текст «Введите корректный год рождения» (#17148 п. 2.4).
+      example: 1998
+    AuthPassword:
+      type: string
+      format: password
+      minLength: 8
+      maxLength: 128
+      pattern: '^(?=.*[A-Z])(?=.*[a-z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).*$'
+      description: |
+        Новый пароль (#17148 п. 2.1, #17150 п. 2.1): 8-128 символов, хотя бы одна заглавная и
+        одна строчная латинская буква, цифра и специальный символ. Специальный символ - любой,
+        кроме латинской буквы и цифры (допущение: набор в требованиях не задан).
+
+        Ошибки, code `AUTH_VALIDATION_ERROR` (#17148 п. 2.3, #17150 п. 2.3):
+        - пусто - «Введите пароль», в формах #17150 - «Введите новый пароль»;
+        - короче 8 символов - «Пароль должен содержать не менее 8 символов»;
+        - длиннее 128 символов - «Пароль должен содержать не более 128 символов» (допущение:
+          текста в требованиях нет);
+        - нет заглавной буквы, строчной буквы или цифры - «Пароль должен содержать хотя бы одну
+          заглавную букву, одну строчную букву и одну цифру»;
+        - нет специального символа - «Пароль должен содержать хотя бы одну заглавную букву, одну
+          строчную букву, одну цифру и один специальный символ» (допущение: #17148 п. 2.3
+          спецсимвол не проверяет, в #17150 п. 2.3 вместо «и» стоит «или»).
+
+        Совпадение с подтверждением («Пароли не совпадают») проверяет только клиент, поле
+        подтверждения на сервер не отправляется: в серверных проверках #17148 п. 2.4 его нет.
+      example: 'Kino#2026'
+    AuthLogin:
+      type: string
+      minLength: 1
+      maxLength: 254
+      anyOf:
+        - pattern: '^[A-Za-z0-9_]{3,30}$'
+        - format: email
+      description: |
+        Имя пользователя или email (#17149 п. 2.1, п. 2.2 шаг 3). Строка с `@` - email, без `@` -
+        имя пользователя.
+
+        Ошибки, code `AUTH_VALIDATION_ERROR`, field `login` (#17149 п. 2.3, #17150 п. 1.2 шаг 4):
+        - пусто - «Введите имя пользователя или email»;
+        - не имя пользователя по правилам `AuthUsername` и не email - «Введите корректные имя
+          пользователя или email».
+      example: movie_fan_42
+    AuthLinkToken:
+      type: string
+      minLength: 1
+      description: Токен из ссылки в письме. Непрозрачная строка, формат выбирает backend.
+      example: 3q2-7wEAAAB5cLkqg1PLSw
+    AuthTokenRequest:
+      type: object
+      required: [token]
+      properties:
+        token:
+          $ref: '#/components/schemas/AuthLinkToken'
+    AuthRegisterRequest:
+      type: object
+      required: [username, email, birth_year, password]
+      properties:
+        username:
+          $ref: '#/components/schemas/AuthUsername'
+        email:
+          $ref: '#/components/schemas/AuthEmail'
+        birth_year:
+          $ref: '#/components/schemas/AuthBirthYear'
+        password:
+          $ref: '#/components/schemas/AuthPassword'
+    AuthConfirmationSent:
+      type: object
+      required: [resend_after]
+      properties:
+        resend_after:
+          type: integer
+          minimum: 0
+          maximum: 60
+          description: |
+            Через сколько секунд станет доступна кнопка «Отправить повторно» (#17148 п. 2.2
+            шаг 10). Сразу после отправки письма - 60.
+          example: 60
+    AuthResendConfirmationRequest:
+      description: Ровно одно из полей - `login` или `token`.
+      oneOf:
+        - type: object
+          required: [login]
+          properties:
+            login:
+              $ref: '#/components/schemas/AuthLogin'
+        - type: object
+          required: [token]
+          properties:
+            token:
+              $ref: '#/components/schemas/AuthLinkToken'
+    AuthLoginRequest:
+      type: object
+      required: [login, password]
+      properties:
+        login:
+          $ref: '#/components/schemas/AuthLogin'
+        password:
+          type: string
+          format: password
+          minLength: 1
+          description: |
+            Пароль. Клиент проверяет только, что поле не пустое: «Введите пароль» (#17149 п. 2.3).
+            Строку длиннее 128 символов сервер не хеширует и отвечает `AUTH_INVALID_CREDENTIALS`:
+            таких паролей не бывает (#17148 п. 2.1). Поэтому `maxLength` в схеме нет.
+        captcha_token:
+          type: string
+          description: |
+            Токен Yandex SmartCaptcha из виджета на форме входа. Нужен, если предыдущий ответ
+            пришел с `captcha_required: true`. На каждую попытку - новый токен.
+          example: dD0xNzI3NDM0NTY3O2k9MTAuMC4wLjE7
+    AuthLoginError:
+      description: Ошибка формы входа - `Error` и признак CAPTCHA.
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          required: [captcha_required]
+          properties:
+            captcha_required:
+              type: boolean
+              description: |
+                `true` - следующую попытку надо отправить с `captcha_token`, клиент сразу
+                показывает виджет (#17149 п. 2.2 шаг 8, п. 2.5).
+    AuthOidcProvider:
+      type: string
+      enum: [google, yandex, vk]
+      description: OIDC-провайдер (#17148 п. 3.1). `vk` - VK ID.
+    AuthOidcPending:
+      type: object
+      required: [kind, provider, email, suggested_username]
+      properties:
+        kind:
+          type: string
+          enum: [registration, link]
+          description: |
+            `registration` - страница «Завершение регистрации» (#17148 п. 3.2 шаг 8).
+            `link` - форма входа с сообщением «Учётная запись с email {email} уже существует.
+            Войдите с паролем, чтобы привязать {провайдер}» (#17148 п. 3.2 шаг 7).
+        provider:
+          $ref: '#/components/schemas/AuthOidcProvider'
+        email:
+          type: string
+          format: email
+          description: Email из профиля провайдера.
+        suggested_username:
+          type: string
+          nullable: true
+          description: |
+            Для `registration` - имя пользователя из имени профиля провайдера, при совпадении с
+            занятым - со случайным числовым суффиксом (#17148 п. 3.2 шаг 7). Символы вне
+            `[A-Za-z0-9_]` транслитерируются или отбрасываются, длина приводится к 3-30
+            (допущение: имя профиля может быть на кириллице). Для `link` - `null`.
+    AuthOidcCompleteRequest:
+      type: object
+      required: [username, birth_year]
+      properties:
+        username:
+          $ref: '#/components/schemas/AuthUsername'
+        birth_year:
+          $ref: '#/components/schemas/AuthBirthYear'
+    AuthPasswordResetRequest:
+      type: object
+      required: [login]
+      properties:
+        login:
+          $ref: '#/components/schemas/AuthLogin'
+    AuthPasswordResetCompleteRequest:
+      type: object
+      required: [token, new_password]
+      properties:
+        token:
+          $ref: '#/components/schemas/AuthLinkToken'
+        new_password:
+          $ref: '#/components/schemas/AuthPassword'
+    UserPasswordChangeRequest:
+      type: object
+      required: [new_password]
+      properties:
+        current_password:
+          type: string
+          format: password
+          minLength: 1
+          description: |
+            Текущий пароль. Обязателен, если у учетной записи есть пароль (`has_password`);
+            пустой - «Введите текущий пароль» (#17150 п. 3.2 шаг 8). Без пароля (учетная запись
+            из OIDC) поле не передается (#17150 п. 3.1). Строка длиннее 128 символов -
+            `AUTH_CURRENT_PASSWORD_INVALID` без хеширования.
+        new_password:
+          $ref: '#/components/schemas/AuthPassword'
+    SessionInfo:
+      type: object
+      required: [user, expires_at]
+      properties:
+        user:
+          $ref: '#/components/schemas/UserSummary'
+        expires_at:
+          type: string
+          format: date-time
+          description: Конец сессии - 24 ч с момента входа, не продлевается (#17094 п. 1.3).
+          example: '2026-09-28T12:00:00Z'
+    UserSummary:
+      type: object
+      required: [username, avatar_url, has_password]
+      properties:
+        username:
+          type: string
+          example: movie_fan_42
+        avatar_url:
+          type: string
+          format: uri
+          nullable: true
+          description: |
+            Фото профиля для аватара в шапке (#17149 п. 2.6). `null` - фото нет, клиент
+            показывает иконку «Пользователь» (#17030 п. 2.1.1.1). До работ по профилю (#17030)
+            всегда `null`.
+        has_password:
+          type: boolean
+          description: |
+            `false` - учетная запись создана через OIDC и пароль не задан: в смене пароля нет
+            поля «Текущий пароль» (#17150 п. 3.1).
   responses:
     Unauthorized:
       description: Нет сессии или сессия истекла (#17094 п. 1.1, 1.3).
@@ -199,6 +466,74 @@ components:
               value:
                 code: SERVER_BUSY
                 message: Сервис перегружен. Попробуйте позже
+    # --- #17629 ---
+    SessionCreated:
+      description: Создана сессия, установлена cookie `dv_session`.
+      headers:
+        Set-Cookie:
+          $ref: '#/components/headers/SessionSetCookie'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SessionInfo'
+          example:
+            user:
+              username: movie_fan_42
+              avatar_url: null
+              has_password: true
+            expires_at: '2026-09-28T12:00:00Z'
+    AuthOidcExpired:
+      description: |
+        Нет cookie `dv_oidc` или истекли 30 минут на завершение входа через OIDC. Клиент
+        возвращает пользователя на форму входа или регистрации. Если провайдер неизвестен
+        (cookie нет), текст без «через {провайдер}» (допущение).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: AUTH_OIDC_EXPIRED
+            message: Не удалось выполнить вход через Google. Попробуйте снова или используйте другой способ
+            field: null
+    AuthResetLinkExpired:
+      description: |
+        Ссылка сброса пароля истекла, заменена новой или уже использована (#17150 п. 2.2
+        шаг 2, п. 2.4). Клиент показывает кнопку «Запросить повторно», она ведет к форме запроса.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: AUTH_RESET_LINK_EXPIRED
+            message: Срок действия ссылки истёк. Запросите восстановление пароля повторно
+            field: null
+  parameters:
+    AuthOidcProviderPath:
+      name: provider
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/AuthOidcProvider'
+    AuthOidcCookie:
+      name: dv_oidc
+      in: cookie
+      required: true
+      description: Cookie незавершенного входа через OIDC, см. тег OIDC.
+      schema:
+        type: string
+  headers:
+    SessionSetCookie:
+      description: |
+        `dv_session=<id>; HttpOnly; Secure; SameSite=Lax; Path=/api/v1; Max-Age=86400`.
+        `<id>` - случайный идентификатор, в PostgreSQL хранится его хеш (wiki `PostgreSQL`).
+      schema:
+        type: string
+      example: 'dv_session=Yp3kq0vN8m2xR5tL; HttpOnly; Secure; SameSite=Lax; Path=/api/v1; Max-Age=86400'
+    SessionClearCookie:
+      description: Стирает cookie `dv_session`.
+      schema:
+        type: string
+      example: 'dv_session=; Path=/api/v1; Max-Age=0'
 paths:
   /search/image:
     post:
@@ -625,3 +960,895 @@ paths:
           $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/SearchUnavailable'
+  /auth/register:
+    post:
+      tags: [Auth]
+      operationId: registerUser
+      summary: Регистрация по имени пользователя, email и паролю
+      description: |
+        #17148 п. 2. Создает учетную запись со статусом «Не подтверждена», сохраняет год рождения
+        и ставит в очередь письмо со ссылкой подтверждения (#17148 п. 2.2 шаг 9, п. 2.5). Сессия
+        не создается: вход - после подтверждения email.
+
+        После 201 клиент показывает «На адрес {email} отправлено письмо. Перейдите по ссылке в
+        письме для завершения регистрации» и кнопку «Отправить повторно», доступную через
+        `resend_after` секунд (#17148 п. 2.2 шаг 10).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthRegisterRequest'
+            example:
+              username: movie_fan_42
+              email: ivan@example.com
+              birth_year: 1998
+              password: 'Kino#2026'
+      responses:
+        '201':
+          description: Учетная запись создана, письмо поставлено в очередь.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthConfirmationSent'
+              example:
+                resend_after: 60
+        '400':
+          description: Нарушены правила полей (#17148 п. 2.3, 2.4).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                username_short:
+                  value:
+                    code: AUTH_VALIDATION_ERROR
+                    message: Имя пользователя должно содержать не менее 3 символов
+                    field: username
+                password_weak:
+                  value:
+                    code: AUTH_VALIDATION_ERROR
+                    message: Пароль должен содержать хотя бы одну заглавную букву, одну строчную букву и одну цифру
+                    field: password
+                birth_year_invalid:
+                  value:
+                    code: AUTH_BIRTH_YEAR_INVALID
+                    message: Введите корректный год рождения
+                    field: birth_year
+        '409':
+          description: Email или имя пользователя заняты (#17148 п. 2.4).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                email_taken:
+                  value:
+                    code: AUTH_EMAIL_TAKEN
+                    message: Пользователь с таким email уже существует
+                    field: email
+                username_taken:
+                  value:
+                    code: AUTH_USERNAME_TAKEN
+                    message: Это имя пользователя уже занято
+                    field: username
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /auth/confirm-email:
+    post:
+      tags: [Auth]
+      operationId: confirmEmail
+      summary: Подтверждение email по ссылке из письма
+      description: |
+        Ссылка в письме ведет на страницу SPA `/confirm-email?token=...` (маршрут - предложение,
+        согласуется в #17634), страница отправляет токен сюда. Ссылка прямо на API с GET не
+        подходит: почтовые сканеры открывают ссылки из писем и израсходовали бы токен, а cookie
+        сессии досталась бы сканеру.
+
+        Успех (#17148 п. 2.2 шаг 12, п. 2.5): статус «Активна», создана сессия. Клиент уходит на
+        главную с уведомлением «Email подтверждён. Добро пожаловать в DejaView!».
+
+        Ссылка живет 24 ч, действует только последняя отправленная (#17148 п. 2.5). Истекшая,
+        замененная новой или уже использованная ссылка - `410 AUTH_CONFIRMATION_LINK_EXPIRED`:
+        клиент показывает «Срок действия ссылки истёк» и кнопку «Отправить новую ссылку»
+        (`POST /auth/resend-confirmation` с этим же токеном). Использованную ссылку требования не
+        описывают, ответ как для истекшей (допущение, по аналогии с #17150 п. 2.2).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthTokenRequest'
+            example:
+              token: 3q2-7wEAAAB5cLkqg1PLSw
+      responses:
+        '200':
+          $ref: '#/components/responses/SessionCreated'
+        '410':
+          description: Ссылка истекла, заменена новой или уже использована (#17148 п. 2.5).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: AUTH_CONFIRMATION_LINK_EXPIRED
+                message: Срок действия ссылки истёк
+                field: null
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /auth/resend-confirmation:
+    post:
+      tags: [Auth]
+      operationId: resendEmailConfirmation
+      summary: Повторная отправка письма подтверждения
+      description: |
+        Кнопки «Отправить повторно» и «Отправить новую ссылку» (#17148 п. 2.2 шаг 10, п. 2.5).
+        Что передает клиент:
+        - страница после регистрации - `login` = email из формы;
+        - ошибка входа `AUTH_EMAIL_NOT_CONFIRMED` - `login` из формы входа, там может быть имя
+          пользователя (#17148 п. 2.5, #17149 п. 2.4);
+        - страница истекшей ссылки - `token` из этой ссылки. Сервер находит по нему учетную
+          запись и после истечения срока.
+
+        Новая ссылка аннулирует предыдущую (#17148 п. 2.5). Письмо уходит не чаще раза в 60
+        секунд (#17148 п. 2.2 шаг 10): если 60 секунд не прошло, письмо не отправляется, а
+        `resend_after` - остаток. Если учетной записи нет или она уже подтверждена, письмо не
+        отправляется, ответ такой же, как при отправке.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthResendConfirmationRequest'
+            examples:
+              by_login:
+                value:
+                  login: ivan@example.com
+              by_token:
+                value:
+                  token: 3q2-7wEAAAB5cLkqg1PLSw
+      responses:
+        '202':
+          description: Запрос принят, `resend_after` - когда можно повторить.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthConfirmationSent'
+              examples:
+                sent:
+                  value:
+                    resend_after: 60
+                too_early:
+                  value:
+                    resend_after: 42
+        '400':
+          description: Неверный формат `login` (#17149 п. 2.3).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: AUTH_VALIDATION_ERROR
+                message: Введите корректные имя пользователя или email
+                field: login
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      summary: Вход по имени пользователя или email и паролю
+      description: |
+        #17149 п. 2. Успех - новая сессия; прежняя сессия из cookie, если была, удаляется.
+
+        **Защита от подбора** (#17149 п. 2.5, #17094 п. 3.3). Счетчик неудачных попыток подряд
+        ведется на учетную запись, найденную по `login`. Порядок проверок:
+        1. Вход заблокирован после 5 неудачных попыток - `429 AUTH_LOGIN_LOCKED` с `Retry-After`,
+           пароль не проверяется. Блокировка 15 минут.
+        2. После 3 неудачных попыток вход требует CAPTCHA. Без `captcha_token` -
+           `403 AUTH_CAPTCHA_REQUIRED`, с непрошедшим проверку токеном - `403 AUTH_CAPTCHA_INVALID`.
+           Эти ответы неудачной попыткой не считаются.
+        3. Неверный пароль - `400 AUTH_INVALID_CREDENTIALS`, счетчик +1. Текст по виду `login`:
+           с `@` - про email, без - про имя пользователя (#17149 п. 2.4). В ответе
+           `captcha_required: true`, если следующая попытка уже требует CAPTCHA: клиент
+           показывает виджет вместе с ошибкой (#17149 п. 2.2 шаг 8). Пятая неудачная попытка подряд
+           сразу отвечает `429 AUTH_LOGIN_LOCKED`.
+        4. Верный пароль, статус «Не подтверждена» - `403 AUTH_EMAIL_NOT_CONFIRMED`, клиент
+           показывает кнопку «Отправить новую ссылку» (`POST /auth/resend-confirmation` с тем же
+           `login`). Заблокирована - `403 AUTH_ACCOUNT_BLOCKED`. Эти статусы видны только после
+           верного пароля.
+        5. Успешный вход или конец блокировки сбрасывают счетчик (#17149 п. 2.5). Верный пароль
+           в шаге 4 тоже сбрасывает: это не подбор (допущение).
+
+        Если `login` не найден или у учетной записи нет пароля (создана через OIDC), ответ
+        `AUTH_INVALID_CREDENTIALS`. Для несуществующего `login` счетчика нет, CAPTCHA и
+        блокировка не включаются: занятость email и имени и так видна при регистрации
+        (#17148 п. 2.4).
+
+        **CAPTCHA.** Виджет Yandex SmartCaptcha на клиенте, ключ клиента задается при сборке
+        frontend. Токен из виджета клиент кладет в `captcha_token`, backend проверяет его
+        запросом к SmartCaptcha (wiki `API_service`). Отдельного запроса «нужна ли CAPTCHA» нет:
+        клиент узнает об этом из `captcha_required` или кода `AUTH_CAPTCHA_REQUIRED`, после
+        прохождения виджета отправляет форму снова.
+
+        **Привязка OIDC.** Если есть cookie `dv_oidc` с исходом `link_required` (тег OIDC) и вход
+        выполнен в учетную запись с тем же email, провайдер привязывается к ней (#17148 п. 3.2
+        шаг 7), cookie стирается. Вход в другую учетную запись привязку отменяет.
+      security: []
+      parameters:
+        - name: dv_oidc
+          in: cookie
+          required: false
+          description: Есть, если вход идет после исхода OIDC `link_required`.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthLoginRequest'
+            examples:
+              by_username:
+                value:
+                  login: movie_fan_42
+                  password: 'Kino#2026'
+              with_captcha:
+                value:
+                  login: ivan@example.com
+                  password: 'Kino#2026'
+                  captcha_token: dD0xNzI3NDM0NTY3O2k9MTAuMC4wLjE7
+      responses:
+        '200':
+          $ref: '#/components/responses/SessionCreated'
+        '400':
+          description: Пустые поля или неверные учетные данные (#17149 п. 2.3, 2.4).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthLoginError'
+              examples:
+                login_empty:
+                  value:
+                    code: AUTH_VALIDATION_ERROR
+                    message: Введите имя пользователя или email
+                    field: login
+                    captcha_required: false
+                wrong_username_or_password:
+                  value:
+                    code: AUTH_INVALID_CREDENTIALS
+                    message: Неверные имя пользователя или пароль
+                    field: null
+                    captcha_required: false
+                wrong_email_or_password_captcha_next:
+                  value:
+                    code: AUTH_INVALID_CREDENTIALS
+                    message: Неверные email или пароль
+                    field: null
+                    captcha_required: true
+        '403':
+          description: Нужна CAPTCHA, email не подтвержден или учетная запись заблокирована.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthLoginError'
+              examples:
+                captcha_required:
+                  value:
+                    code: AUTH_CAPTCHA_REQUIRED
+                    message: Подтвердите, что вы не робот
+                    field: captcha_token
+                    captcha_required: true
+                captcha_invalid:
+                  value:
+                    code: AUTH_CAPTCHA_INVALID
+                    message: Проверка не пройдена. Попробуйте ещё раз
+                    field: captcha_token
+                    captcha_required: true
+                email_not_confirmed:
+                  value:
+                    code: AUTH_EMAIL_NOT_CONFIRMED
+                    message: Email не подтверждён. Проверьте почту или запросите новую ссылку
+                    field: null
+                    captcha_required: false
+                account_blocked:
+                  value:
+                    code: AUTH_ACCOUNT_BLOCKED
+                    message: Ваша учётная запись заблокирована. Обратитесь в службу поддержки
+                    field: null
+                    captcha_required: false
+        '429':
+          description: |
+            `AUTH_LOGIN_LOCKED` - вход заблокирован после 5 неудачных попыток подряд
+            (#17149 п. 2.4, 2.5). `{N}` - сколько минут осталось, с округлением вверх,
+            `Retry-After` - то же в секундах, не больше 900. С тем же HTTP-кодом приходит общий
+            лимит запросов nginx (`TooManyRequests`), клиент различает их по `code`.
+          headers:
+            Retry-After:
+              description: Через сколько секунд можно повторить вход.
+              schema:
+                type: integer
+              example: 840
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: AUTH_LOGIN_LOCKED
+                message: Слишком много попыток входа. Повторите через 14 минут
+                field: null
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logout
+      summary: Выход
+      description: |
+        Завершает текущую сессию (#17151): запись удаляется, cookie стирается. Клиент уходит на
+        главную как гость. Другие сессии пользователя остаются: выход со всех устройств
+        требованиями не задан (вопрос в комментарии к #17151).
+
+        401 (сессия уже истекла) клиент считает успешным выходом: окно входа не открывает.
+      security:
+        - sessionCookie: []
+      responses:
+        '204':
+          description: Сессия завершена.
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SessionClearCookie'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /auth/session:
+    get:
+      tags: [Auth]
+      operationId: getSession
+      summary: Текущая сессия и пользователь
+      description: |
+        Клиент вызывает при загрузке SPA, чтобы понять, гость он или авторизован: cookie
+        `HttpOnly`, из JavaScript ее не видно. По ответу шапка показывает аватар или кнопки
+        «Войти» и «Зарегистрироваться» (#17149 п. 2.6, #17151 п. 1 шаг 5). В требованиях такой
+        операции нет, она нужна из-за `HttpOnly` (допущение).
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Пользователь авторизован.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionInfo'
+              example:
+                user:
+                  username: movie_fan_42
+                  avatar_url: null
+                  has_password: true
+                expires_at: '2026-09-28T12:00:00Z'
+        '401':
+          description: |
+            Гость или сессия недействительна (#17094 п. 1.1, 1.3). Такой же ответ у любой
+            операции с `sessionCookie` (общий ответ `Unauthorized`), правила - в теге Auth.
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SessionClearCookie'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                session_required:
+                  value:
+                    code: SESSION_REQUIRED
+                    message: Войдите, чтобы продолжить
+                    field: null
+                session_expired:
+                  value:
+                    code: SESSION_EXPIRED
+                    message: Сессия истекла. Войдите снова
+                    field: null
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /auth/oidc/{provider}/start:
+    get:
+      tags: [OIDC]
+      operationId: startOidcLogin
+      summary: Начало входа через OIDC-провайдера
+      description: |
+        Кнопка «Продолжить с Google / Яндекс / VK» (#17148 п. 3.2 шаги 3-4, #17149 п. 3.1). Это
+        переход браузера, а не запрос из JavaScript. Backend создает запись со `state` и PKCE
+        `code_verifier`, ставит cookie `dv_oidc` и отправляет браузер на страницу авторизации
+        провайдера. Запрашиваются email и имя профиля (#17148 п. 3.2 шаг 7).
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/AuthOidcProviderPath'
+      responses:
+        '302':
+          description: Переход к провайдеру.
+          headers:
+            Location:
+              description: |
+                Страница авторизации провайдера с `client_id`, `redirect_uri`, `state`,
+                `code_challenge` (S256).
+              schema:
+                type: string
+              example: 'https://oauth.yandex.ru/authorize?response_type=code&client_id=...&state=...&code_challenge=...&code_challenge_method=S256'
+            Set-Cookie:
+              description: '`dv_oidc=<id>; HttpOnly; Secure; SameSite=Lax; Path=/api/v1/auth; Max-Age=1800`.'
+              schema:
+                type: string
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /auth/oidc/{provider}/callback:
+    get:
+      tags: [OIDC]
+      operationId: handleOidcCallback
+      summary: Возврат от OIDC-провайдера
+      description: |
+        `redirect_uri`, зарегистрированный у провайдера:
+        `https://<домен>/api/v1/auth/oidc/{provider}/callback`. Backend проверяет `state` по
+        cookie `dv_oidc`, меняет код на токены, запрашивает профиль и ищет учетную запись
+        (#17148 п. 3.2 шаги 6-7, #17149 п. 3.1 шаг 7).
+
+        Ответ - всегда 302 на страницу SPA `/auth/oidc` с параметрами `provider` и `result`,
+        JSON не возвращается, в том числе при ошибке. Значения `result` - в теге OIDC. Код и
+        описание ошибки провайдера наружу не передаются (#17094 п. 4.3).
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/AuthOidcProviderPath'
+        - name: code
+          in: query
+          required: false
+          description: Авторизационный код, если пользователь дал доступ.
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: false
+          description: Значение `state` из запроса к провайдеру. Нет или не совпало - `result=error`.
+          schema:
+            type: string
+        - name: error
+          in: query
+          required: false
+          description: Ошибка провайдера, например `access_denied` при отказе (#17148 п. 3.4).
+          schema:
+            type: string
+        - $ref: '#/components/parameters/AuthOidcCookie'
+      responses:
+        '302':
+          description: Переход на страницу SPA с исходом входа.
+          headers:
+            Location:
+              schema:
+                type: string
+              example: '/auth/oidc?provider=google&result=registration_required'
+            Set-Cookie:
+              description: |
+                `success` - `dv_session` (как в `SessionCreated`), `dv_oidc` стирается;
+                `registration_required`, `link_required` - `dv_oidc` продлевается на 30 минут;
+                остальные исходы - `dv_oidc` стирается.
+              schema:
+                type: string
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /auth/oidc/pending:
+    get:
+      tags: [OIDC]
+      operationId: getOidcPending
+      summary: Данные незавершенного входа через OIDC
+      description: |
+        Для страниц после исходов `registration_required` и `link_required`: предзаполненное имя
+        пользователя (#17148 п. 3.2 шаг 8) или email для сообщения о привязке (п. 3.2 шаг 7).
+        Email не передается в адресе редиректа, чтобы не попадать в историю браузера и логи.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/AuthOidcCookie'
+      responses:
+        '200':
+          description: Данные для страницы.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthOidcPending'
+              examples:
+                registration:
+                  value:
+                    kind: registration
+                    provider: google
+                    email: ivan@gmail.com
+                    suggested_username: ivan_petrov
+                link:
+                  value:
+                    kind: link
+                    provider: vk
+                    email: ivan@example.com
+                    suggested_username: null
+        '410':
+          $ref: '#/components/responses/AuthOidcExpired'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /auth/oidc/complete:
+    post:
+      tags: [OIDC]
+      operationId: completeOidcRegistration
+      summary: Завершение регистрации через OIDC
+      description: |
+        Кнопка «Продолжить» на странице «Завершение регистрации» (#17148 п. 3.2 шаги 8-10). Имя
+        пользователя и год рождения проверяются как в #17148 п. 2.3.
+
+        Успех: учетная запись со статусом «Активна» без подтверждения email, провайдер привязан,
+        год рождения сохранен, создана сессия, `dv_oidc` стирается (#17148 п. 3.2, 3.3). Клиент
+        уходит на главную.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/AuthOidcCookie'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthOidcCompleteRequest'
+            example:
+              username: ivan_petrov
+              birth_year: 1998
+      responses:
+        '201':
+          $ref: '#/components/responses/SessionCreated'
+        '400':
+          description: Нарушены правила полей (#17148 п. 2.3, 2.4).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                username_chars:
+                  value:
+                    code: AUTH_VALIDATION_ERROR
+                    message: Имя пользователя может содержать только латинские буквы, цифры и нижнее подчёркивание
+                    field: username
+                birth_year_invalid:
+                  value:
+                    code: AUTH_BIRTH_YEAR_INVALID
+                    message: Введите корректный год рождения
+                    field: birth_year
+        '409':
+          description: |
+            Имя пользователя занято (#17148 п. 2.4). `AUTH_EMAIL_TAKEN` - если учетную запись с
+            этим email успели зарегистрировать, пока пользователь был на странице.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                username_taken:
+                  value:
+                    code: AUTH_USERNAME_TAKEN
+                    message: Это имя пользователя уже занято
+                    field: username
+                email_taken:
+                  value:
+                    code: AUTH_EMAIL_TAKEN
+                    message: Пользователь с таким email уже существует
+                    field: null
+        '410':
+          $ref: '#/components/responses/AuthOidcExpired'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /auth/password-reset/request:
+    post:
+      tags: [Password]
+      operationId: requestPasswordReset
+      summary: Запрос ссылки для сброса пароля
+      description: |
+        #17150 п. 1. Ответ всегда 202 без тела, есть учетная запись или нет (#17150 п. 1.2
+        шаг 8). Клиент показывает «Если учётная запись с таким email существует, мы отправили
+        ссылку для восстановления пароля. Проверьте почту».
+
+        Если учетная запись найдена, письмо со ссылкой ставится в очередь. Ссылка живет 1 ч,
+        действует только последняя (#17150 п. 1.2 шаг 9). Письмо уходит через очередь, поэтому
+        время ответа не зависит от того, найден ли email (wiki «Стек технологий», разд. 7).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthPasswordResetRequest'
+            example:
+              login: ivan@example.com
+      responses:
+        '202':
+          description: Запрос принят.
+        '400':
+          description: Пустое поле или неверный формат (#17150 п. 1.2 шаг 4).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: AUTH_VALIDATION_ERROR
+                message: Введите имя пользователя или email
+                field: login
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /auth/password-reset/check:
+    post:
+      tags: [Password]
+      operationId: checkPasswordResetToken
+      summary: Проверка ссылки сброса пароля
+      description: |
+        Страница SPA по ссылке из письма проверяет токен до показа формы «Новый пароль»
+        (#17150 п. 2.2 шаг 2). Токен не расходуется.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthTokenRequest'
+            example:
+              token: Qm9vazpQYXNzd29yZFJlc2V0
+      responses:
+        '204':
+          description: Ссылка действительна, можно показывать форму.
+        '410':
+          $ref: '#/components/responses/AuthResetLinkExpired'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /auth/password-reset/complete:
+    post:
+      tags: [Password]
+      operationId: completePasswordReset
+      summary: Установка нового пароля по ссылке
+      description: |
+        #17150 п. 2. Успех (п. 2.5): пароль обновлен, все сессии пользователя завершены,
+        создана новая, в очередь поставлено письмо «Пароль вашей учётной записи DejaView был
+        изменён. Если это были не вы, немедленно восстановите пароль». Клиент уходит на главную
+        с уведомлением «Пароль успешно изменён».
+
+        Если учетная запись не подтверждена, сброс подтверждает email: владение ящиком
+        доказано переходом по ссылке (допущение, в #17150 случай не описан).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthPasswordResetCompleteRequest'
+            example:
+              token: Qm9vazpQYXNzd29yZFJlc2V0
+              new_password: 'Kino#2027'
+      responses:
+        '200':
+          $ref: '#/components/responses/SessionCreated'
+        '400':
+          description: Нарушены правила пароля или он совпадает с текущим (#17150 п. 2.3, 2.4).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                password_short:
+                  value:
+                    code: AUTH_VALIDATION_ERROR
+                    message: Пароль должен содержать не менее 8 символов
+                    field: new_password
+                same_as_current:
+                  value:
+                    code: AUTH_PASSWORD_SAME_AS_CURRENT
+                    message: Новый пароль должен отличаться от текущего
+                    field: new_password
+        '410':
+          $ref: '#/components/responses/AuthResetLinkExpired'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /users/me/password:
+    put:
+      tags: [Password]
+      operationId: changePassword
+      summary: Смена пароля из профиля
+      description: |
+        #17150 п. 3. Успех (п. 3.3): пароль обновлен, все сессии пользователя, кроме текущей,
+        завершены, в очередь поставлено письмо о смене пароля. Клиент показывает «Пароль
+        успешно изменён».
+
+        Если пароля не было (`has_password: false`), `current_password` не передается, операция
+        задает пароль (#17150 п. 3.1).
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserPasswordChangeRequest'
+            example:
+              current_password: 'Kino#2026'
+              new_password: 'Kino#2027'
+      responses:
+        '204':
+          description: Пароль изменен.
+        '400':
+          description: Нарушены правила или неверен текущий пароль (#17150 п. 3.2).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                current_password_empty:
+                  value:
+                    code: AUTH_VALIDATION_ERROR
+                    message: Введите текущий пароль
+                    field: current_password
+                current_password_wrong:
+                  value:
+                    code: AUTH_CURRENT_PASSWORD_INVALID
+                    message: Неверный текущий пароль
+                    field: current_password
+                same_as_current:
+                  value:
+                    code: AUTH_PASSWORD_SAME_AS_CURRENT
+                    message: Новый пароль должен отличаться от текущего
+                    field: new_password
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+tags:
+  - name: search
+    description: Поиск фильма по изображению, видео и тексту (#17628).
+  - name: Auth
+    description: |
+      Регистрация, подтверждение email, вход, выход, сессия (#17148, #17149, #17151). Sprint 1.
+
+      ### Сессия
+
+      - Серверная: запись в PostgreSQL, в cookie `dv_session` только случайный идентификатор
+        (#17094 п. 1.3, wiki «Стек технологий», разд. 5). JWT нет.
+      - Cookie: `HttpOnly; Secure; SameSite=Lax; Path=/api/v1; Max-Age=86400`. JavaScript ее не
+        читает, состояние входа клиент узнает через `GET /auth/session`.
+      - Срок - 24 ч с момента создания, без продления: #17094 п. 1.3 ограничивает сессию 24
+        часами, скользящее продление этот предел снимает. После истечения нужен новый вход.
+      - Сессия создается при входе, подтверждении email, завершении входа через OIDC и сбросе
+        пароля. Идентификатор каждый раз новый, сессия из cookie запроса, если была, удаляется.
+      - Сессия завершается: выход (#17151, только текущая), истечение срока, сброс пароля
+        (#17150 п. 2.5, все сессии), смена пароля из профиля (#17150 п. 3.3, все, кроме текущей).
+      - `SameSite=Lax`: браузер не отправляет cookie в POST с чужого сайта. CORS - только домен
+        приложения (#17094 п. 4.4).
+
+      ### Без авторизации и с истекшей сессией
+
+      Операции с `security: [{sessionCookie: []}]` доступны только авторизованному пользователю
+      (#17094 п. 1.1, 1.4). Операции с `security: []` открыты гостю.
+
+      | Запрос к операции с `sessionCookie` | Ответ |
+      |---|---|
+      | нет cookie `dv_session` | 401 `SESSION_REQUIRED` |
+      | сессия истекла, завершена или не найдена | 401 `SESSION_EXPIRED` и `Set-Cookie` с `Max-Age=0` |
+
+      Операция гостя с недействительной cookie выполняется как для гостя, cookie стирается.
+
+      Что делает клиент по 401:
+      - на действие пользователя (добавить в список, оценить и т.п.) - переходит в состояние
+        гостя, открывает окно входа, после входа повторяет действие (#17149 п. 2.6, #17026 п. 3,
+        #17027 п. 3);
+      - на `GET /auth/session` при загрузке SPA и на `POST /auth/logout` - просто показывает
+        гостя, окно входа не открывает.
+
+      Поэтому 401 означает только отсутствие сессии, неверный пароль при входе - 400.
+
+      ### Контроль прав
+
+      Роли две: «Гость» и «Пользователь» (#17148 п. 2.6, #17151 п. 2). Гостю доступны
+      операции с `security: []`, пользователю - все. Свои ресурсы пользователь адресует через
+      `/users/me`: владелец берется из сессии, а не из пути или тела. Операций над чужими
+      учетными записями в API нет. Проверка прав (#17094 п. 4.1) - проверка сессии на каждом
+      запросе к операции с `sessionCookie` и выборка данных только владельца сессии. Профиль
+      другим пользователям недоступен (#17030 п. 1).
+
+      ### Ошибки
+
+      Тело ошибки - `Error`. `message` клиент показывает как есть: текст на русском
+      (#17097 п. 1.2) из требований, без внутренних деталей (#17094 п. 4.3). Стек, SQL, пути,
+      ответы OIDC-провайдеров и SmartCaptcha наружу не уходят, непредвиденная ошибка -
+      `500 INTERNAL_ERROR`. Сервер возвращает одну ошибку, первую найденную: она показывается
+      над формой (#17148 п. 2.2 шаг 8, #17149 п. 2.2 шаг 10), `field` - для подсветки поля.
+
+      Сервер повторяет клиентские проверки (#17148 п. 2.3, #17149 п. 2.3): клиент можно обойти.
+      Правила и тексты по полям - в схемах `AuthUsername`, `AuthEmail`, `AuthBirthYear`,
+      `AuthPassword`, `AuthLogin`. Тело не JSON - `400 AUTH_VALIDATION_ERROR`, `field: null`,
+      «Произошла ошибка. Попробуйте позже».
+
+      HTTP-коды: 400 - исправить ввод, 401 - нет сессии, 403 - состояние учетной записи не
+      позволяет, 409 - занято, 410 - ссылка или ожидание истекли, 429 - лимит.
+
+      | code | HTTP | Текст | Откуда |
+      |---|---|---|---|
+      | `AUTH_VALIDATION_ERROR` | 400 | по полю, см. схемы | #17148 п. 2.3, #17149 п. 2.3, #17150 п. 1.2, 2.3, 3.2 |
+      | `AUTH_BIRTH_YEAR_INVALID` | 400 | «Введите корректный год рождения» | #17148 п. 2.4 |
+      | `AUTH_INVALID_CREDENTIALS` | 400 | «Неверные имя пользователя или пароль» / «Неверные email или пароль» | #17149 п. 2.4 |
+      | `AUTH_PASSWORD_SAME_AS_CURRENT` | 400 | «Новый пароль должен отличаться от текущего» | #17150 п. 2.4, 3.2 |
+      | `AUTH_CURRENT_PASSWORD_INVALID` | 400 | «Неверный текущий пароль» | #17150 п. 3.2 |
+      | `SESSION_REQUIRED` | 401 | «Войдите, чтобы продолжить» | допущение |
+      | `SESSION_EXPIRED` | 401 | «Сессия истекла. Войдите снова» | допущение |
+      | `AUTH_EMAIL_NOT_CONFIRMED` | 403 | «Email не подтверждён. Проверьте почту или запросите новую ссылку» | #17148 п. 2.5, #17149 п. 2.4 |
+      | `AUTH_ACCOUNT_BLOCKED` | 403 | «Ваша учётная запись заблокирована. Обратитесь в службу поддержки» | #17149 п. 2.4 |
+      | `AUTH_CAPTCHA_REQUIRED` | 403 | «Подтвердите, что вы не робот» | допущение |
+      | `AUTH_CAPTCHA_INVALID` | 403 | «Проверка не пройдена. Попробуйте ещё раз» | допущение |
+      | `AUTH_EMAIL_TAKEN` | 409 | «Пользователь с таким email уже существует» | #17148 п. 2.4 |
+      | `AUTH_USERNAME_TAKEN` | 409 | «Это имя пользователя уже занято» | #17148 п. 2.4 |
+      | `AUTH_CONFIRMATION_LINK_EXPIRED` | 410 | «Срок действия ссылки истёк» | #17148 п. 2.5 |
+      | `AUTH_OIDC_EXPIRED` | 410 | «Не удалось выполнить вход через {провайдер}. Попробуйте снова или используйте другой способ» | текст #17148 п. 3.4, случай - допущение |
+      | `AUTH_RESET_LINK_EXPIRED` | 410 | «Срок действия ссылки истёк. Запросите восстановление пароля повторно» | #17150 п. 2.4 |
+      | `AUTH_LOGIN_LOCKED` | 429 | «Слишком много попыток входа. Повторите через {N} минут» | #17149 п. 2.4 |
+      | `INTERNAL_ERROR` | 500 | «Произошла ошибка. Попробуйте позже» | #17148 п. 2.4, #17149 п. 2.4 |
+  - name: OIDC
+    description: |
+      Вход и регистрация через Google, Яндекс, VK ID (#17148 п. 3, #17149 п. 3). OAuth2
+      authorization code flow со `state` и PKCE (S256), обмен кода и запрос профиля делает
+      backend (wiki «Стек технологий», разд. 10).
+
+      1. Кнопка провайдера - переход браузера на `GET /auth/oidc/{provider}/start`. Куда вернуть
+         пользователя после входа, SPA запоминает сама до перехода (#17149 п. 2.6).
+      2. Backend ставит cookie `dv_oidc` и отправляет браузер к провайдеру.
+      3. Провайдер возвращает браузер на `GET /auth/oidc/{provider}/callback`. Backend ищет
+         учетную запись сначала по привязке к аккаунту провайдера (#17149 п. 3.1), затем по
+         email (#17148 п. 3.2), и отправляет браузер на страницу SPA `/auth/oidc` с параметрами
+         `provider` и `result`.
+
+      | `result` | Когда | Что делает SPA |
+      |---|---|---|
+      | `success` | учетная запись привязана к провайдеру и активна | сессия уже создана, возврат на исходную страницу (#17149 п. 3.2) |
+      | `registration_required` | нет ни привязки, ни учетной записи с этим email | «Завершение регистрации»: `GET /auth/oidc/pending`, затем `POST /auth/oidc/complete` (#17148 п. 3.2 шаги 8-10) |
+      | `link_required` | учетная запись с этим email есть, провайдер не привязан | форма входа с сообщением «Учётная запись с email {email} уже существует. Войдите с паролем, чтобы привязать {провайдер}», email - из `GET /auth/oidc/pending`; после `POST /auth/login` провайдер привязан (#17148 п. 3.2 шаг 7) |
+      | `account_blocked` | учетная запись заблокирована | «Ваша учётная запись заблокирована. Обратитесь в службу поддержки» (#17149 п. 3.1) |
+      | `error` | отказ пользователя, ошибка или недоступность провайдера, неверный `state` | исходная форма с сообщением «Не удалось выполнить вход через {провайдер}. Попробуйте снова или используйте другой способ» (#17148 п. 3.4, #17149 п. 3.3) |
+
+      Учетная запись создается при завершении регистрации, а не при возврате от провайдера:
+      без года рождения регистрация не закончена (#17148 п. 2.6, 3.3). До этого данные
+      провайдера лежат в серверной записи, к браузеру ее привязывает cookie `dv_oidc`
+      (таблица `oidc_pending`, #17627). Решение архитектора 27.09: в #17148 п. 3.2 шаг 7
+      учетная запись создается сразу, для пользователя разницы нет.
+
+      Cookie `dv_oidc`: `HttpOnly; Secure; SameSite=Lax; Path=/api/v1/auth`, 30 минут
+      (допущение). `SameSite=Lax` нужен, чтобы cookie пришла на callback при переходе с сайта
+      провайдера. В cookie только идентификатор записи со `state`, `code_verifier` и данными
+      профиля провайдера.
+
+      Маршруты SPA `/auth/oidc` и `/confirm-email` - предложение, согласуются с frontend в #17634.
+  - name: Password
+    description: |
+      Восстановление и смена пароля (#17150). Не входит в Sprint 1 (#17629 п. 8), контракт
+      описан заранее.
+
+      Ссылка из письма ведет на страницу SPA с токеном в адресе: срок 1 ч, действует только
+      последняя (#17150 п. 1.2 шаг 9). Страница проверяет токен (`POST /auth/password-reset/check`)
+      и показывает форму «Новый пароль» или сообщение об истекшей ссылке (#17150 п. 2.2 шаг 2).
