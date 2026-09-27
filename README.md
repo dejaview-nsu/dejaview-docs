@@ -8,6 +8,7 @@
 - [process.md](process.md): кто заводит задачи, статусы, жизненный цикл, роли
 - [conventions.md](conventions.md): ветки, коммиты, code style, Definition of Done
 - [api/openapi.yaml](api/openapi.yaml): контракт REST API
+- [contracts/db-schema.md](contracts/db-schema.md): схема PostgreSQL, граница с Qdrant, объемы, миграции
 
 ## Ссылки
 
