@@ -419,6 +419,129 @@ components:
           description: |
             `false` - учетная запись создана через OIDC и пароль не задан: в смене пароля нет
             поля «Текущий пароль» (#17150 п. 3.1).
+    MovieCard:
+      type: object
+      description: >-
+        Карточка фильма для блоков 1, 3, 8, 9 #17193. Поля и их пустые значения совпадают с
+        таблицей `movies` (#17627, `contracts/db-schema.md`), кроме `poster_url`: в БД лежит
+        `poster_path`, полный URL собирает backend. Пустое значение - `null` у скалярных полей и
+        `[]` у списков, пустых строк нет. Блоки вне Sprint 1 (трейлер, актеры, оценки, отзывы)
+        добавятся новыми необязательными полями или операциями: клиент игнорирует незнакомые поля.
+      required: [movie_id, title, original_title, year, age_rating, poster_url, runtime_min, overview, genres, countries, crew]
+      properties:
+        movie_id:
+          type: integer
+          format: int64
+          description: Идентификатор фильма TMDB (#17241).
+          example: 157336
+        title:
+          type: string
+          minLength: 1
+          description: Название на русском (#17193 блок 3, #17640).
+          example: Интерстеллар
+        original_title:
+          type: string
+          minLength: 1
+          description: Название на языке оригинала (#17193 блок 3).
+          example: Interstellar
+        year:
+          type: integer
+          nullable: true
+          description: >-
+            Год выпуска (#17193 блок 3), как в `MovieSearchResult.year`. Backend берет год из
+            `movies.release_date` (#17627). null - дата неизвестна.
+          example: 2014
+        age_rating:
+          type: string
+          nullable: true
+          enum: ['0+', '6+', '12+', '16+', '18+', null]
+          description: >-
+            Возрастное ограничение, только российский формат (#17193 блок 3). null - в TMDB
+            нет рейтинга для RU (#17640), frontend блок не показывает.
+          example: 12+
+        poster_url:
+          type: string
+          format: uri
+          nullable: true
+          description: >-
+            Полный URL постера на CDN TMDB (#17193 блок 1, #17393 п. 2), как в
+            `MovieSearchResult`. null - постера нет, frontend показывает заглушку.
+          example: https://image.tmdb.org/t/p/w500/poster-157336.jpg
+        runtime_min:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: >-
+            Длительность в минутах. Формат «X ч Y мин» собирает frontend (#17193 блок 8). null -
+            длительность неизвестна.
+          example: 169
+        overview:
+          type: string
+          minLength: 1
+          nullable: true
+          description: Описание сюжета (#17193 блок 9). null - описания нет.
+          example: Группа исследователей отправляется через червоточину искать планету для человечества.
+        genres:
+          type: array
+          description: Жанры (#17193 блок 8) в порядке показа. `[]` - жанров нет.
+          items:
+            $ref: '#/components/schemas/MovieGenre'
+        countries:
+          type: array
+          description: Страны производства (#17193 блок 8) в порядке показа. `[]` - стран нет.
+          items:
+            $ref: '#/components/schemas/MovieCountry'
+        crew:
+          type: array
+          description: >-
+            Съемочная группа (#17193 блок 8) в порядке показа. Один элемент - одна роль человека:
+            режиссер и сценарист в одном лице - два элемента. Единственное или множественное число
+            в подписи («Сценарист», «Сценаристы») выбирает frontend по числу элементов роли.
+            `[]` - данных нет, frontend строки блока 8 не показывает.
+          items:
+            $ref: '#/components/schemas/MovieCrewMember'
+    MovieGenre:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+          description: id жанра TMDB.
+          example: 878
+        name:
+          type: string
+          description: Название на русском.
+          example: фантастика
+    MovieCountry:
+      type: object
+      required: [code, name]
+      properties:
+        code:
+          type: string
+          pattern: '^[A-Z]{2}$'
+          description: Код ISO 3166-1 alpha-2.
+          example: US
+        name:
+          type: string
+          description: Название на русском.
+          example: США
+    MovieCrewMember:
+      type: object
+      required: [person_id, name, role]
+      properties:
+        person_id:
+          type: integer
+          format: int64
+          description: id человека в TMDB.
+          example: 525
+        name:
+          type: string
+          example: Кристофер Нолан
+        role:
+          type: string
+          enum: [director, writer, composer, producer]
+          description: Режиссер, сценарист, композитор, продюсер (#17193 блок 8).
+          example: director
   responses:
     Unauthorized:
       description: Нет сессии или сессия истекла (#17094 п. 1.1, 1.3).
@@ -1722,6 +1845,141 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
+  /movies/{movie_id}:
+    get:
+      operationId: getMovie
+      tags: [Movies]
+      summary: Карточка фильма
+      description: |
+        Данные для страницы фильма: блоки 1, 3, 8, 9 #17193. По `movie_id` из выдачи поиска
+        frontend открывает карточку (#17241).
+
+        **Доступ.** Карточка открыта гостю, поэтому `security: []`: гость видит страницу, окно
+        входа открывается только на действие - оценку, списки, отзыв (#17193 блоки 5, 6, 7, 12).
+        Эти действия в Sprint 1 не описываются (#17630 п. 6).
+
+        **Источник.** Backend берет фильм из PostgreSQL (кеш TMDB, #17393 п. 2). Фильма там нет -
+        запрашивает TMDB по `movie_id`, сохраняет в `movies` и отдает карточку (#17241). TMDB
+        такого id не знает - 404. TMDB недоступен - 503, если фильма нет в кеше (#17296).
+
+        **Язык.** Названия, жанры, страны и описание - на русском: каталог собирается с
+        `language=ru-RU` (#17640), в `movies` одна локаль (#17627).
+
+        | Ситуация | HTTP | code |
+        |---|---|---|
+        | фильм есть в PostgreSQL или получен из TMDB | 200 | - |
+        | `movie_id` не целое положительное число или TMDB его не знает | 404 | `MOVIE_NOT_FOUND` |
+        | фильма нет в кеше, TMDB недоступен | 503 | `MOVIE_UNAVAILABLE` |
+
+        Пример запроса:
+
+        ```
+        curl https://<host>/api/v1/movies/157336
+        ```
+      security: []
+      parameters:
+        - name: movie_id
+          in: path
+          required: true
+          description: Идентификатор фильма TMDB (#17241).
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+          example: 157336
+      responses:
+        '200':
+          description: Карточка фильма.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MovieCard'
+              examples:
+                full:
+                  summary: Все поля заполнены
+                  value:
+                    movie_id: 157336
+                    title: Интерстеллар
+                    original_title: Interstellar
+                    year: 2014
+                    age_rating: 12+
+                    poster_url: https://image.tmdb.org/t/p/w500/poster-157336.jpg
+                    runtime_min: 169
+                    overview: Группа исследователей отправляется через червоточину искать планету для человечества.
+                    genres:
+                      - id: 12
+                        name: приключения
+                      - id: 18
+                        name: драма
+                      - id: 878
+                        name: фантастика
+                    countries:
+                      - code: US
+                        name: США
+                      - code: GB
+                        name: Великобритания
+                    crew:
+                      - person_id: 525
+                        name: Кристофер Нолан
+                        role: director
+                      - person_id: 525
+                        name: Кристофер Нолан
+                        role: writer
+                      - person_id: 527
+                        name: Джонатан Нолан
+                        role: writer
+                      - person_id: 947
+                        name: Ханс Циммер
+                        role: composer
+                      - person_id: 556
+                        name: Эмма Томас
+                        role: producer
+                empty:
+                  summary: Пустые состояния - нет постера, рейтинга, длительности, описания, съемочной группы
+                  value:
+                    movie_id: 1000001
+                    title: Фильм без данных
+                    original_title: Film Without Data
+                    year: null
+                    age_rating: null
+                    poster_url: null
+                    runtime_min: null
+                    overview: null
+                    genres: []
+                    countries: []
+                    crew: []
+        '404':
+          description: >-
+            Фильма с таким `movie_id` нет ни в PostgreSQL, ни в TMDB, или `movie_id` не целое
+            положительное число. Frontend показывает сообщение вместо карточки.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                MOVIE_NOT_FOUND:
+                  value:
+                    code: MOVIE_NOT_FOUND
+                    message: Фильм не найден
+                    field: null
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          description: >-
+            Фильма нет в кеше, TMDB недоступен: вызовы к TMDB приостановлены или он не ответил
+            (#17296, действия по смягчению п. 3). Фильм из кеша отдается и при недоступном TMDB.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                MOVIE_UNAVAILABLE:
+                  value:
+                    code: MOVIE_UNAVAILABLE
+                    message: Не удалось загрузить информацию о фильме. Попробуйте позже
+                    field: null
 tags:
   - name: search
     description: Поиск фильма по изображению, видео и тексту (#17628).
@@ -1852,3 +2110,5 @@ tags:
       Ссылка из письма ведет на страницу SPA с токеном в адресе: срок 1 ч, действует только
       последняя (#17150 п. 1.2 шаг 9). Страница проверяет токен (`POST /auth/password-reset/check`)
       и показывает форму «Новый пароль» или сообщение об истекшей ссылке (#17150 п. 2.2 шаг 2).
+  - name: Movies
+    description: Карточка фильма (#17630). В Sprint 1 - блоки 1, 3, 8, 9 #17193.
