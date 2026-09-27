@@ -32,6 +32,126 @@ components:
           type: string
           nullable: true
           description: Поле формы или параметр запроса, к которому относится ошибка.
+    SearchErrorCode:
+      type: string
+      description: |
+        Коды ошибок поиска. Какой подпункт требований каким кодом закрыт - в описании операции.
+
+        - `FILE_REQUIRED` - файл не передан.
+        - `TOO_MANY_FILES` - передано больше одного файла.
+        - `FILE_TOO_LARGE` - файл больше лимита режима.
+        - `UNSUPPORTED_FORMAT` - формат файла не из списка режима.
+        - `VIDEO_TOO_LONG` - видео длиннее 30 с.
+        - `FILE_CORRUPTED` - файл поврежден или не декодируется.
+        - `QUERY_EMPTY`, `QUERY_TOO_SHORT`, `QUERY_TOO_LONG`, `QUERY_NOT_ALLOWED` - ошибки текстового запроса.
+        - `SEARCH_UNAVAILABLE` - ML-сервис недоступен или не ответил в таймаут.
+        - `SERVER_BUSY` - перегрузка: лимит параллельных запросов к ML-сервису исчерпан.
+      enum:
+        - FILE_REQUIRED
+        - TOO_MANY_FILES
+        - FILE_TOO_LARGE
+        - UNSUPPORTED_FORMAT
+        - VIDEO_TOO_LONG
+        - FILE_CORRUPTED
+        - QUERY_EMPTY
+        - QUERY_TOO_SHORT
+        - QUERY_TOO_LONG
+        - QUERY_NOT_ALLOWED
+        - SEARCH_UNAVAILABLE
+        - SERVER_BUSY
+    SearchError:
+      description: Ошибка поиска - `Error` с кодом из `SearchErrorCode`.
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            code:
+              $ref: '#/components/schemas/SearchErrorCode'
+    SearchImageRequest:
+      type: object
+      required: [file]
+      properties:
+        file:
+          type: string
+          format: binary
+          description: >-
+            Один файл изображения: JPG, JPEG, PNG или WEBP, до 10 МБ (#17153 п. 4.2). Картинка,
+            вставленная из буфера обмена (#17153 п. 3.2), отправляется так же, как выбранный файл.
+    SearchVideoRequest:
+      type: object
+      required: [file]
+      properties:
+        file:
+          type: string
+          format: binary
+          description: >-
+            Один видеофайл: MP4, MOV или WEBM, не длиннее 30 с и до 50 МБ (#17154 п. 4.2).
+    SearchTextRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          minLength: 3
+          maxLength: 250
+          description: >-
+            Свободное описание фильма на русском или английском (#17152 п. 3.1-3.3), от 3 до 250
+            символов (#17152 п. 3.4).
+          example: фильм, где хакеру предлагают выбрать красную или синюю таблетку
+    SearchResponse:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          maxItems: 10
+          description: >-
+            Фильмы по убыванию релевантности. Для текста не больше 10 (#17152 п. 4.4), для
+            изображения и видео не больше 1 (#17153 п. 6.1, #17154 п. 6.1). Пустой массив - ничего
+            не найдено (#17152 п. 6, #17153 п. 7, #17154 п. 7), это не ошибка. Score релевантности
+            не отдается (#17392 п. 5, #17152 п. 5.4). Фильм, для которого нет карточки ни в
+            PostgreSQL, ни в TMDB, в выдачу не попадает; если так выпали все, ответ - пустая
+            выдача, а не 503.
+          items:
+            $ref: '#/components/schemas/MovieSearchResult'
+    MovieSearchResult:
+      type: object
+      description: >-
+        Элемент выдачи: поля по #17152 п. 5.1, #17153 п. 6.2, #17154 п. 6.2. Backend берет их из
+        PostgreSQL (кеш TMDB, #17393 п. 2), отдельный запрос на каждый элемент выдачи не нужен.
+      required: [movie_id, title, year, poster_url, overview]
+      properties:
+        movie_id:
+          type: integer
+          format: int64
+          description: >-
+            Идентификатор фильма TMDB (#17241). По нему frontend открывает карточку фильма
+            (#17153 п. 6.2.5, 6.3).
+          example: 603
+        title:
+          type: string
+          description: Название фильма.
+          example: Матрица
+        year:
+          type: integer
+          nullable: true
+          description: Год выпуска, null - год неизвестен.
+          example: 1999
+        poster_url:
+          type: string
+          format: uri
+          nullable: true
+          description: >-
+            Полный URL постера на CDN TMDB (#17393 п. 2). null - постера нет, frontend показывает
+            заглушку.
+          example: https://image.tmdb.org/t/p/w500/poster-603.jpg
+        overview:
+          type: string
+          nullable: true
+          description: >-
+            Описание фильма целиком, null - описания нет. До фрагмента его обрезает frontend под
+            свою верстку.
+          example: Хакер Нео узнает, что мир вокруг - компьютерная симуляция.
     # --- #17629: регистрация, вход, сессия, пароль ---
     AuthUsername:
       type: string
@@ -326,6 +446,26 @@ components:
           example:
             code: INTERNAL_ERROR
             message: Произошла ошибка. Попробуйте позже
+    SearchUnavailable:
+      description: >-
+        Поиск временно недоступен (#17152 п. 8, #17153 п. 9, #17154 п. 9). Результатов в ответе нет:
+        вместо ошибки нерелевантная выдача не отдается (#17153 п. 9.1). Коды общие с контрактом
+        backend - ML-сервис (#17626).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SearchError'
+          examples:
+            SEARCH_UNAVAILABLE:
+              summary: 'ML-сервис недоступен или не ответил в таймаут (риск #17296)'
+              value:
+                code: SEARCH_UNAVAILABLE
+                message: Поиск временно недоступен. Попробуйте позже
+            SERVER_BUSY:
+              summary: Перегрузка, ответ не дольше 5 с (#17093 п. 5.1)
+              value:
+                code: SERVER_BUSY
+                message: Сервис перегружен. Попробуйте позже
     # --- #17629 ---
     SessionCreated:
       description: Создана сессия, установлена cookie `dv_session`.
@@ -395,6 +535,431 @@ components:
         type: string
       example: 'dv_session=; Path=/api/v1; Max-Age=0'
 paths:
+  /search/image:
+    post:
+      operationId: searchByImage
+      tags: [search]
+      summary: Поиск фильма по изображению
+      description: |
+        Кадр, скриншот, постер или титр (#17153 п. 1.2) - на выходе один наиболее релевантный
+        фильм (#17153 п. 6.1). Только для авторизованного пользователя (#17153 п. 1.1,
+        #17243 п. 4.3, 5.3): без сессии - 401, frontend открывает форму входа.
+
+        **Время.** Запрос синхронный: один HTTP-запрос без очереди и опроса статуса (wiki
+        `Стек_технологий`, разд. 7). Ответ - не дольше 10 с для 95% запросов (#17093 п. 2.3),
+        отсчет с момента, когда тело запроса получено целиком. Загрузка файла до 10 МБ - не
+        дольше 5 с (#17093 п. 3.1). При перегрузке 503 `SERVER_BUSY` приходит не дольше чем
+        через 5 с (#17093 п. 5.1). Лимит - 100 запросов в минуту на сессию (#17094 п. 3.4).
+
+        **Ограничения и ошибки** (#17153 п. 4.2, 8.1). 1 МБ = 1 048 576 байт, границы
+        включительно. Формат определяется по содержимому файла, а не по расширению. Если
+        нарушений несколько, в ответе одно - первое в порядке проверки: наличие файла, число
+        файлов, размер, формат, целостность.
+
+        | #17153 | Условие | HTTP | code |
+        |---|---|---|---|
+        | 8.1.1 | изображение не загружено и не вставлено | 400 | `FILE_REQUIRED` |
+        | 8.1.2 | больше одного файла | 400 | `TOO_MANY_FILES` |
+        | 8.1.3 | формат не JPG, JPEG, PNG или WEBP | 415 | `UNSUPPORTED_FORMAT` |
+        | 8.1.4 | размер больше 10 МБ | 413 | `FILE_TOO_LARGE` |
+        | 8.1.5 | файл поврежден или не обрабатывается | 422 | `FILE_CORRUPTED` |
+
+        Пример запроса:
+
+        ```
+        curl -X POST https://<host>/api/v1/search/image \
+          -b 'dv_session=<идентификатор сессии>' \
+          -F 'file=@frame.jpg;type=image/jpeg'
+        ```
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/SearchImageRequest'
+            encoding:
+              file:
+                contentType: image/jpeg, image/png, image/webp
+            examples:
+              frame:
+                summary: Кадр из фильма, JPG
+                value:
+                  file: <бинарное содержимое frame.jpg>
+      responses:
+        '200':
+          description: >-
+            Поиск выполнен. Пустой `results` - релевантный фильм не найден (#17153 п. 7.1): это не
+            ошибка, frontend показывает сообщение об отсутствии результата.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+              examples:
+                found:
+                  summary: Фильм найден
+                  value:
+                    results:
+                      - movie_id: 603
+                        title: Матрица
+                        year: 1999
+                        poster_url: https://image.tmdb.org/t/p/w500/poster-603.jpg
+                        overview: Хакер Нео узнает, что мир вокруг - компьютерная симуляция.
+                empty:
+                  summary: Ничего не найдено (#17153 п. 7)
+                  value:
+                    results: []
+        '400':
+          description: Файла нет или их больше одного (#17153 п. 8.1.1, 8.1.2).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchError'
+              examples:
+                FILE_REQUIRED:
+                  summary: 8.1.1 - изображение не загружено
+                  value:
+                    code: FILE_REQUIRED
+                    message: 'Невозможно выполнить поиск по изображению: изображение не загружено'
+                    field: file
+                TOO_MANY_FILES:
+                  summary: 8.1.2 - больше одного файла
+                  value:
+                    code: TOO_MANY_FILES
+                    message: 'Невозможно выполнить поиск по изображению: загружено больше одного файла'
+                    field: file
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          description: >-
+            Файл больше 10 МБ (#17153 п. 8.1.4). Тело больше лимита nginx (`client_max_body_size`,
+            wiki `Nginx`) отклоняет nginx, ответ тот же: JSON с кодом `FILE_TOO_LARGE`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchError'
+              examples:
+                FILE_TOO_LARGE:
+                  summary: 8.1.4 - размер больше 10 МБ
+                  value:
+                    code: FILE_TOO_LARGE
+                    message: 'Невозможно выполнить поиск по изображению: размер файла больше 10 МБ'
+                    field: file
+        '415':
+          description: Формат не JPG, JPEG, PNG или WEBP (#17153 п. 8.1.3).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchError'
+              examples:
+                UNSUPPORTED_FORMAT:
+                  summary: 8.1.3 - неподдерживаемый формат
+                  value:
+                    code: UNSUPPORTED_FORMAT
+                    message: 'Невозможно выполнить поиск по изображению: поддерживаются только JPG, JPEG, PNG и WEBP'
+                    field: file
+        '422':
+          description: Файл поврежден или не может быть обработан (#17153 п. 8.1.5).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchError'
+              examples:
+                FILE_CORRUPTED:
+                  summary: 8.1.5 - файл поврежден
+                  value:
+                    code: FILE_CORRUPTED
+                    message: 'Невозможно выполнить поиск по изображению: файл поврежден или не может быть обработан'
+                    field: file
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/SearchUnavailable'
+  /search/video:
+    post:
+      operationId: searchByVideo
+      tags: [search]
+      summary: Поиск фильма по видеофрагменту
+      description: |
+        Короткая сцена или фрагмент видео (#17154 п. 1.2) - на выходе один наиболее релевантный
+        фильм (#17154 п. 6.1). Только для авторизованного пользователя (#17154 п. 1.1,
+        #17243 п. 4.3, 5.4): без сессии - 401, frontend открывает форму входа.
+
+        **Время.** Запрос синхронный: один HTTP-запрос без очереди и опроса статуса (wiki
+        `Стек_технологий`, разд. 7). Ответ - не дольше 15 с для 95% запросов (#17093 п. 2.4),
+        отсчет с момента, когда тело запроса получено целиком. Загрузка файла до 50 МБ - не
+        дольше 30 с (#17093 п. 3.2). При перегрузке 503 `SERVER_BUSY` приходит не дольше чем
+        через 5 с (#17093 п. 5.1). Лимит - 100 запросов в минуту на сессию (#17094 п. 3.4).
+
+        **Загрузка и обработка** идут в одном запросе: прогресс загрузки клиент видит по отправке
+        тела, после отправки ждет ответа (#17625). Отмена на любом этапе - клиент обрывает запрос.
+
+        **Ограничения и ошибки** (#17154 п. 4.2, 8.1). 1 МБ = 1 048 576 байт, границы
+        включительно. Формат определяется по содержимому файла, а не по расширению. Если
+        нарушений несколько, в ответе одно - первое в порядке проверки: наличие файла, число
+        файлов, размер, формат, длительность, целостность.
+
+        | #17154 | Условие | HTTP | code |
+        |---|---|---|---|
+        | 8.1.1 | видеофрагмент не загружен | 400 | `FILE_REQUIRED` |
+        | 8.1.2 | больше одного файла | 400 | `TOO_MANY_FILES` |
+        | 8.1.3 | формат не MP4, MOV или WEBM | 415 | `UNSUPPORTED_FORMAT` |
+        | 8.1.4 | длительность больше 30 с | 422 | `VIDEO_TOO_LONG` |
+        | 8.1.5 | размер больше 50 МБ | 413 | `FILE_TOO_LARGE` |
+        | 8.1.6 | файл поврежден или не обрабатывается | 422 | `FILE_CORRUPTED` |
+
+        Пример запроса:
+
+        ```
+        curl -X POST https://<host>/api/v1/search/video \
+          -b 'dv_session=<идентификатор сессии>' \
+          -F 'file=@scene.mp4;type=video/mp4'
+        ```
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/SearchVideoRequest'
+            encoding:
+              file:
+                contentType: video/mp4, video/quicktime, video/webm
+            examples:
+              scene:
+                summary: Сцена из фильма, MP4
+                value:
+                  file: <бинарное содержимое scene.mp4>
+      responses:
+        '200':
+          description: >-
+            Поиск выполнен. Пустой `results` - релевантный фильм не найден (#17154 п. 7.1): это не
+            ошибка, frontend показывает сообщение об отсутствии результата.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+              examples:
+                found:
+                  summary: Фильм найден
+                  value:
+                    results:
+                      - movie_id: 27205
+                        title: Начало
+                        year: 2010
+                        poster_url: https://image.tmdb.org/t/p/w500/poster-27205.jpg
+                        overview: Кобб крадет идеи из снов, а теперь должен внедрить идею в чужое подсознание.
+                empty:
+                  summary: Ничего не найдено (#17154 п. 7)
+                  value:
+                    results: []
+        '400':
+          description: Файла нет или их больше одного (#17154 п. 8.1.1, 8.1.2).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchError'
+              examples:
+                FILE_REQUIRED:
+                  summary: 8.1.1 - видеофрагмент не загружен
+                  value:
+                    code: FILE_REQUIRED
+                    message: 'Невозможно выполнить поиск по видеофрагменту: видеофрагмент не загружен'
+                    field: file
+                TOO_MANY_FILES:
+                  summary: 8.1.2 - больше одного файла
+                  value:
+                    code: TOO_MANY_FILES
+                    message: 'Невозможно выполнить поиск по видеофрагменту: загружено больше одного файла'
+                    field: file
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          description: >-
+            Файл больше 50 МБ (#17154 п. 8.1.5). Тело больше лимита nginx (`client_max_body_size`,
+            wiki `Nginx`) отклоняет nginx, ответ тот же: JSON с кодом `FILE_TOO_LARGE`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchError'
+              examples:
+                FILE_TOO_LARGE:
+                  summary: 8.1.5 - размер больше 50 МБ
+                  value:
+                    code: FILE_TOO_LARGE
+                    message: 'Невозможно выполнить поиск по видеофрагменту: размер файла больше 50 МБ'
+                    field: file
+        '415':
+          description: Формат не MP4, MOV или WEBM (#17154 п. 8.1.3).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchError'
+              examples:
+                UNSUPPORTED_FORMAT:
+                  summary: 8.1.3 - неподдерживаемый формат
+                  value:
+                    code: UNSUPPORTED_FORMAT
+                    message: 'Невозможно выполнить поиск по видеофрагменту: поддерживаются только MP4, MOV и WEBM'
+                    field: file
+        '422':
+          description: >-
+            Видео длиннее 30 с (#17154 п. 8.1.4) или файл поврежден и не может быть обработан
+            (#17154 п. 8.1.6).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchError'
+              examples:
+                VIDEO_TOO_LONG:
+                  summary: 8.1.4 - длительность больше 30 с
+                  value:
+                    code: VIDEO_TOO_LONG
+                    message: 'Невозможно выполнить поиск по видеофрагменту: видео длиннее 30 секунд'
+                    field: file
+                FILE_CORRUPTED:
+                  summary: 8.1.6 - файл поврежден
+                  value:
+                    code: FILE_CORRUPTED
+                    message: 'Невозможно выполнить поиск по видеофрагменту: файл поврежден или не может быть обработан'
+                    field: file
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/SearchUnavailable'
+  /search/text:
+    post:
+      operationId: searchByText
+      tags: [search]
+      summary: Поиск фильма по текстовому описанию
+      description: |
+        В Sprint 1 не реализуется. Описан заранее: это единственный режим, доступный гостю.
+
+        Описание сюжета, сцены, персонажей, реплик, жанра или года (#17152 п. 3.1-3.3) - на выходе
+        до 10 фильмов по убыванию релевантности (#17152 п. 4.3, 4.4). Доступен гостю и
+        авторизованному пользователю (#17152 п. 1.1, #17243 п. 4.1, 5.1), поэтому `security: []`:
+        сессия не нужна, 401 здесь не бывает.
+
+        **Время.** Ответ - не дольше 5 с для 95% запросов (#17093 п. 2.2). Лимит - 100 запросов
+        в минуту на сессию, для гостя на IP (#17094 п. 3.4, wiki `Nginx`).
+
+        **Ограничения и ошибки** (#17152 п. 3.4, 7.1). Длина считается в символах Unicode после
+        обрезки пробелов по краям, строка из одних пробелов - пустой запрос. Проверки идут в
+        порядке таблицы, в ответе одна ошибка.
+
+        | #17152 | Условие | HTTP | code |
+        |---|---|---|---|
+        | 7.1.1 | запрос пустой | 400 | `QUERY_EMPTY` |
+        | 7.1.2 | меньше 3 символов | 422 | `QUERY_TOO_SHORT` |
+        | 7.1.3 | больше 250 символов | 422 | `QUERY_TOO_LONG` |
+        | 7.1.4 | недопустимое или вредоносное содержимое | 422 | `QUERY_NOT_ALLOWED` |
+
+        Критерии 7.1.4 в требованиях не заданы: пока их нет, backend этот код не возвращает.
+
+        Пример запроса:
+
+        ```
+        curl -X POST https://<host>/api/v1/search/text \
+          -H 'Content-Type: application/json' \
+          -d '{"query": "фильм, где хакеру предлагают выбрать красную или синюю таблетку"}'
+        ```
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchTextRequest'
+            examples:
+              scene:
+                summary: Описание сцены
+                value:
+                  query: фильм, где хакеру предлагают выбрать красную или синюю таблетку
+      responses:
+        '200':
+          description: >-
+            Поиск выполнен. Пустой `results` - ничего не найдено (#17152 п. 6.1): это не ошибка,
+            подсказку из #17152 п. 6.4 показывает frontend.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+              examples:
+                found:
+                  summary: Найдено несколько фильмов, у последнего нет года, постера и описания
+                  value:
+                    results:
+                      - movie_id: 603
+                        title: Матрица
+                        year: 1999
+                        poster_url: https://image.tmdb.org/t/p/w500/poster-603.jpg
+                        overview: Хакер Нео узнает, что мир вокруг - компьютерная симуляция.
+                      - movie_id: 604
+                        title: 'Матрица: Перезагрузка'
+                        year: 2003
+                        poster_url: https://image.tmdb.org/t/p/w500/poster-604.jpg
+                        overview: Нео и его соратники защищают Зион от машин.
+                      - movie_id: 1000001
+                        title: Фильм без постера
+                        year: null
+                        poster_url: null
+                        overview: null
+                empty:
+                  summary: Ничего не найдено (#17152 п. 6)
+                  value:
+                    results: []
+        '400':
+          description: Запрос пустой (#17152 п. 7.1.1).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchError'
+              examples:
+                QUERY_EMPTY:
+                  summary: 7.1.1 - запрос пустой
+                  value:
+                    code: QUERY_EMPTY
+                    message: 'Невозможно выполнить поиск по запросу: запрос пустой'
+                    field: query
+        '422':
+          description: >-
+            Запрос короче 3 или длиннее 250 символов либо содержит недопустимое содержимое
+            (#17152 п. 7.1.2-7.1.4).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchError'
+              examples:
+                QUERY_TOO_SHORT:
+                  summary: 7.1.2 - меньше 3 символов
+                  value:
+                    code: QUERY_TOO_SHORT
+                    message: 'Невозможно выполнить поиск по запросу: запрос короче 3 символов'
+                    field: query
+                QUERY_TOO_LONG:
+                  summary: 7.1.3 - больше 250 символов
+                  value:
+                    code: QUERY_TOO_LONG
+                    message: 'Невозможно выполнить поиск по запросу: запрос длиннее 250 символов'
+                    field: query
+                QUERY_NOT_ALLOWED:
+                  summary: 7.1.4 - недопустимое содержимое
+                  value:
+                    code: QUERY_NOT_ALLOWED
+                    message: 'Невозможно выполнить поиск по запросу: запрос содержит недопустимое содержимое'
+                    field: query
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/SearchUnavailable'
   /auth/register:
     post:
       tags: [Auth]
@@ -1158,6 +1723,8 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 tags:
+  - name: search
+    description: Поиск фильма по изображению, видео и тексту (#17628).
   - name: Auth
     description: |
       Регистрация, подтверждение email, вход, выход, сессия (#17148, #17149, #17151). Sprint 1.
