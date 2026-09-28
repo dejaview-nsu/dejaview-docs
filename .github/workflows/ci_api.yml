@@ -1,0 +1,29 @@
+name: OpenAPI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Новый коммит отменяет проверку старого
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    name: OpenAPI lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Lint specs
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/spec \
+            redocly/cli:2.54.3 \
+            lint --format=github-actions $(git ls-files '*openapi*.yaml')
