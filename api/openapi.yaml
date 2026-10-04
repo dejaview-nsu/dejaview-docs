@@ -231,8 +231,10 @@ components:
       minLength: 1
       maxLength: 254
       anyOf:
-        - pattern: '^[A-Za-z0-9_]{3,30}$'
-        - format: email
+        - type: string
+          pattern: '^[A-Za-z0-9_]{3,30}$'
+        - type: string
+          format: email
       description: |
         Имя пользователя или email (#17149 п. 2.1, п. 2.2 шаг 3). Строка с `@` - email, без `@` -
         имя пользователя.
@@ -550,7 +552,10 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     TooManyRequests:
-      description: Превышен лимит 100 запросов в минуту (#17094 п. 3.4).
+      description: >-
+        Превышен лимит 100 запросов в минуту (#17094 п. 3.4), code `RATE_LIMITED`. Отвечает nginx
+        (`limit_req`, wiki `Nginx`): тело и `Retry-After` задаются в его конфиге, `Retry-After` -
+        постоянное число.
       headers:
         Retry-After:
           description: Через сколько секунд можно повторить запрос.
@@ -560,6 +565,9 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+          example:
+            code: RATE_LIMITED
+            message: Слишком много запросов. Попробуйте позже
     InternalError:
       description: Непредвиденная ошибка сервера.
       content:
@@ -1394,7 +1402,7 @@ paths:
             `AUTH_LOGIN_LOCKED` - вход заблокирован после 5 неудачных попыток подряд
             (#17149 п. 2.4, 2.5). `{N}` - сколько минут осталось, с округлением вверх,
             `Retry-After` - то же в секундах, не больше 900. С тем же HTTP-кодом приходит общий
-            лимит запросов nginx (`TooManyRequests`), клиент различает их по `code`.
+            лимит запросов nginx (`TooManyRequests`, `RATE_LIMITED`), клиент различает их по `code`.
           headers:
             Retry-After:
               description: Через сколько секунд можно повторить вход.
@@ -2067,6 +2075,7 @@ tags:
       | `AUTH_OIDC_EXPIRED` | 410 | «Не удалось выполнить вход через {провайдер}. Попробуйте снова или используйте другой способ» | текст #17148 п. 3.4, случай - допущение |
       | `AUTH_RESET_LINK_EXPIRED` | 410 | «Срок действия ссылки истёк. Запросите восстановление пароля повторно» | #17150 п. 2.4 |
       | `AUTH_LOGIN_LOCKED` | 429 | «Слишком много попыток входа. Повторите через {N} минут» | #17149 п. 2.4 |
+      | `RATE_LIMITED` | 429 | «Слишком много запросов. Попробуйте позже» | #17094 п. 3.4, текст - допущение |
       | `INTERNAL_ERROR` | 500 | «Произошла ошибка. Попробуйте позже» | #17148 п. 2.4, #17149 п. 2.4 |
   - name: OIDC
     description: |
