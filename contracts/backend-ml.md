@@ -118,7 +118,7 @@ ML-сервис повторяет проверки backend (тип, разме�
 | 415 | `UNSUPPORTED_MEDIA_TYPE` | `Content-Type` не из таблицы | 415 `UNSUPPORTED_FORMAT` |
 | 422 | `INVALID_QUERY` | текст короче 3 или длиннее 250 символов, JSON не разбирается | 422 `QUERY_TOO_SHORT` или `QUERY_TOO_LONG` |
 | 422 | `FILE_CORRUPTED` | файл не декодируется | 422 `FILE_CORRUPTED` (#17153 п. 8.1.5, #17154 п. 8.1.6, #17155 п. 8.1.6) |
-| 422 | `DURATION_TOO_LONG` | видео длиннее 30 с, аудио длиннее 10 с | 422 `VIDEO_TOO_LONG` (#17154 п. 8.1.4); для аудио код появится вместе с его эндпоинтом (#17155 п. 8.1.4) |
+| 422 | `DURATION_TOO_LONG` | видео длиннее 30 с, аудио длиннее 10 с | 422 `VIDEO_TOO_LONG` (#17154 п. 8.1.4) или `AUDIO_TOO_LONG` (#17155 п. 8.1.4) |
 | 503 | `NOT_READY` | модель модальности загружается или выключена | 503 `SEARCH_UNAVAILABLE` (раздел 5) |
 | 503 | `QDRANT_UNAVAILABLE` | Qdrant не отвечает | 503 `SEARCH_UNAVAILABLE` |
 | 500 | `INTERNAL_ERROR` | прочие сбои | 503 `SEARCH_UNAVAILABLE` |
