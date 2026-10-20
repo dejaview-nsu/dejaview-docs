@@ -42,6 +42,7 @@ components:
         - `FILE_TOO_LARGE` - файл больше лимита режима.
         - `UNSUPPORTED_FORMAT` - формат файла не из списка режима.
         - `VIDEO_TOO_LONG` - видео длиннее 30 с.
+        - `AUDIO_TOO_LONG` - аудио длиннее 10 с.
         - `FILE_CORRUPTED` - файл поврежден или не декодируется.
         - `QUERY_EMPTY`, `QUERY_TOO_SHORT`, `QUERY_TOO_LONG`, `QUERY_NOT_ALLOWED` - ошибки текстового запроса.
         - `SEARCH_UNAVAILABLE` - ML-сервис недоступен или не ответил в таймаут.
@@ -52,6 +53,7 @@ components:
         - FILE_TOO_LARGE
         - UNSUPPORTED_FORMAT
         - VIDEO_TOO_LONG
+        - AUDIO_TOO_LONG
         - FILE_CORRUPTED
         - QUERY_EMPTY
         - QUERY_TOO_SHORT
@@ -86,6 +88,16 @@ components:
           format: binary
           description: >-
             Один видеофайл: MP4, MOV или WEBM, не длиннее 30 с и до 50 МБ (#17154 п. 4.2).
+    SearchAudioRequest:
+      type: object
+      required: [file]
+      properties:
+        file:
+          type: string
+          format: binary
+          description: >-
+            Один аудиофайл: MP3, WAV, OGG или M4A, не длиннее 10 с и до 20 МБ (#17155 п. 4.2).
+            Запись с микрофона (#17155 п. 3.2) отправляется так же, как выбранный файл, в WAV.
     SearchTextRequest:
       type: object
       required: [query]
@@ -957,6 +969,173 @@ paths:
                   value:
                     code: FILE_CORRUPTED
                     message: 'Невозможно выполнить поиск по видеофрагменту: файл поврежден или не может быть обработан'
+                    field: file
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/SearchUnavailable'
+  /search/audio:
+    post:
+      operationId: searchByAudio
+      tags: [search]
+      summary: Поиск фильма по аудиофрагменту
+      description: |
+        Реплика, музыка или звуковая сцена (#17155 п. 1.2, 4.1) - на выходе один наиболее
+        релевантный фильм (#17155 п. 6.1). Только для авторизованного пользователя (#17155 п. 1.1,
+        #17243 п. 4.3, 5.5): без сессии - 401, frontend открывает форму входа.
+
+        **Время.** Запрос синхронный: один HTTP-запрос без очереди и опроса статуса (wiki
+        `Стек_технологий`, разд. 7). Ответ - не дольше 15 с для 95% запросов (#17093 п. 2.5),
+        отсчет с момента, когда тело запроса получено целиком. Загрузка файла до 20 МБ - не
+        дольше 10 с (#17093 п. 3.3). При перегрузке 503 `SERVER_BUSY` приходит не дольше чем
+        через 5 с (#17093 п. 5.1). Лимит - 100 запросов в минуту на сессию (#17094 п. 3.4).
+
+        **Запись с микрофона** (#17155 п. 3.2). Браузеры пишут звук в WEBM (Chrome) или OGG
+        (Firefox), а WEBM в #17155 п. 4.2.2 нет. Поэтому frontend перекодирует запись в WAV и
+        отправляет в поле `file`, как выбранный файл. 10 с в WAV - 1-2 МБ, в лимит 20 МБ
+        укладывается.
+
+        **Ограничения и ошибки** (#17155 п. 4.2, 8.1). 1 МБ = 1 048 576 байт, границы
+        включительно. Формат определяется по содержимому файла, а не по расширению. Если
+        нарушений несколько, в ответе одно - первое в порядке проверки: наличие файла, число
+        файлов, размер, формат, длительность, целостность. Длительность и целостность проверяет
+        ML-сервис (`contracts/backend-ml.md`, разд. 2).
+
+        | #17155 | Условие | HTTP | code |
+        |---|---|---|---|
+        | 8.1.1 | аудиофрагмент не загружен и не записан | 400 | `FILE_REQUIRED` |
+        | 8.1.2 | больше одного файла | 400 | `TOO_MANY_FILES` |
+        | 8.1.3 | формат не MP3, WAV, OGG или M4A | 415 | `UNSUPPORTED_FORMAT` |
+        | 8.1.4 | длительность больше 10 с | 422 | `AUDIO_TOO_LONG` |
+        | 8.1.5 | размер больше 20 МБ | 413 | `FILE_TOO_LARGE` |
+        | 8.1.6 | файл поврежден или не обрабатывается | 422 | `FILE_CORRUPTED` |
+        | 8.1.7 | нет доступа к микрофону | - | - |
+
+        8.1.7 проверяет браузер: без разрешения записи нет, запрос не отправляется. Frontend
+        показывает сообщение в области сообщений (#17155 п. 8.2) и оставляет возможность разрешить
+        доступ или загрузить файл (п. 8.3).
+
+        Пример запроса:
+
+        ```
+        curl -X POST https://<host>/api/v1/search/audio \
+          -b 'dv_session=<идентификатор сессии>' \
+          -F 'file=@clip.mp3;type=audio/mpeg'
+        ```
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/SearchAudioRequest'
+            encoding:
+              file:
+                contentType: audio/mpeg, audio/wav, audio/ogg, audio/mp4
+            examples:
+              clip:
+                summary: Фрагмент саундтрека, MP3
+                value:
+                  file: <бинарное содержимое clip.mp3>
+              recording:
+                summary: Запись с микрофона, WAV
+                value:
+                  file: <бинарное содержимое recording.wav>
+      responses:
+        '200':
+          description: >-
+            Поиск выполнен. Пустой `results` - релевантный фильм не найден (#17155 п. 7.1): это не
+            ошибка, frontend показывает сообщение об отсутствии результата.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+              examples:
+                found:
+                  summary: Фильм найден
+                  value:
+                    results:
+                      - movie_id: 157336
+                        title: Интерстеллар
+                        year: 2014
+                        poster_url: https://image.tmdb.org/t/p/w500/poster-157336.jpg
+                        overview: Группа исследователей отправляется через червоточину искать планету для человечества.
+                empty:
+                  summary: Ничего не найдено (#17155 п. 7)
+                  value:
+                    results: []
+        '400':
+          description: Файла нет или их больше одного (#17155 п. 8.1.1, 8.1.2).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchError'
+              examples:
+                FILE_REQUIRED:
+                  summary: 8.1.1 - аудиофрагмент не загружен и не записан
+                  value:
+                    code: FILE_REQUIRED
+                    message: 'Невозможно выполнить поиск по аудиофрагменту: аудиофрагмент не загружен и не записан'
+                    field: file
+                TOO_MANY_FILES:
+                  summary: 8.1.2 - больше одного файла
+                  value:
+                    code: TOO_MANY_FILES
+                    message: 'Невозможно выполнить поиск по аудиофрагменту: загружено больше одного файла'
+                    field: file
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          description: >-
+            Файл больше 20 МБ (#17155 п. 8.1.5). Тело больше лимита nginx (`client_max_body_size`,
+            wiki `Nginx`) отклоняет nginx, ответ тот же: JSON с кодом `FILE_TOO_LARGE`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchError'
+              examples:
+                FILE_TOO_LARGE:
+                  summary: 8.1.5 - размер больше 20 МБ
+                  value:
+                    code: FILE_TOO_LARGE
+                    message: 'Невозможно выполнить поиск по аудиофрагменту: размер файла больше 20 МБ'
+                    field: file
+        '415':
+          description: Формат не MP3, WAV, OGG или M4A (#17155 п. 8.1.3).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchError'
+              examples:
+                UNSUPPORTED_FORMAT:
+                  summary: 8.1.3 - неподдерживаемый формат
+                  value:
+                    code: UNSUPPORTED_FORMAT
+                    message: 'Невозможно выполнить поиск по аудиофрагменту: поддерживаются только MP3, WAV, OGG и M4A'
+                    field: file
+        '422':
+          description: >-
+            Аудио длиннее 10 с (#17155 п. 8.1.4) или файл поврежден и не может быть обработан
+            (#17155 п. 8.1.6).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchError'
+              examples:
+                AUDIO_TOO_LONG:
+                  summary: 8.1.4 - длительность больше 10 с
+                  value:
+                    code: AUDIO_TOO_LONG
+                    message: 'Невозможно выполнить поиск по аудиофрагменту: аудиофрагмент длиннее 10 секунд'
+                    field: file
+                FILE_CORRUPTED:
+                  summary: 8.1.6 - файл поврежден
+                  value:
+                    code: FILE_CORRUPTED
+                    message: 'Невозможно выполнить поиск по аудиофрагменту: файл поврежден или не может быть обработан'
                     field: file
         '429':
           $ref: '#/components/responses/TooManyRequests'
@@ -1990,7 +2169,7 @@ paths:
                     field: null
 tags:
   - name: search
-    description: Поиск фильма по изображению, видео и тексту (#17628).
+    description: Поиск фильма по изображению, видео, тексту (#17628) и аудио (#17643).
   - name: Auth
     description: |
       Регистрация, подтверждение email, вход, выход, сессия (#17148, #17149, #17151). Sprint 1.
