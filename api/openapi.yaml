@@ -436,12 +436,13 @@ components:
     MovieCard:
       type: object
       description: >-
-        Карточка фильма для блоков 1, 3, 8, 9 #17193. Поля и их пустые значения совпадают с
+        Карточка фильма для блоков 1, 3, 8, 9, 10 #17193. Поля и их пустые значения совпадают с
         таблицей `movies` (#17627, `contracts/db-schema.md`), кроме `poster_url`: в БД лежит
-        `poster_path`, полный URL собирает backend. Пустое значение - `null` у скалярных полей и
-        `[]` у списков, пустых строк нет. Блоки вне Sprint 1 (трейлер, актеры, оценки, отзывы)
-        добавятся новыми необязательными полями или операциями: клиент игнорирует незнакомые поля.
-      required: [movie_id, title, original_title, year, age_rating, poster_url, runtime_min, overview, genres, countries, crew]
+        `poster_path`, полный URL собирает backend, как и у фото актеров. Пустое значение - `null`
+        у скалярных полей и `[]` у списков, пустых строк нет. Остальные блоки (трейлер, актеры
+        дубляжа, оценки, отзывы) добавятся новыми полями или операциями: клиент игнорирует
+        незнакомые поля.
+      required: [movie_id, title, original_title, year, age_rating, poster_url, runtime_min, overview, genres, countries, crew, actors]
       properties:
         movie_id:
           type: integer
@@ -514,6 +515,13 @@ components:
             `[]` - данных нет, frontend строки блока 8 не показывает.
           items:
             $ref: '#/components/schemas/MovieCrewMember'
+        actors:
+          type: array
+          description: >-
+            Актеры (#17193 блок 10, #17240) в порядке TMDB, не больше 30 - столько сохраняет
+            скрипт каталога (#17640). `[]` - данных нет, frontend блок не показывает.
+          items:
+            $ref: '#/components/schemas/MovieActor'
     MovieGenre:
       type: object
       required: [id, name]
@@ -556,6 +564,31 @@ components:
           enum: [director, writer, composer, producer]
           description: Режиссер, сценарист, композитор, продюсер (#17193 блок 8).
           example: director
+    MovieActor:
+      type: object
+      required: [person_id, name, character, photo_url]
+      properties:
+        person_id:
+          type: integer
+          format: int64
+          description: id человека в TMDB.
+          example: 3895
+        name:
+          type: string
+          example: Майкл Кейн
+        character:
+          type: string
+          nullable: true
+          description: Роль в фильме, подпись под именем (#17240). null - роль в TMDB не указана.
+          example: профессор Брэнд
+        photo_url:
+          type: string
+          format: uri
+          nullable: true
+          description: >-
+            Полный URL фото на CDN TMDB, размер w185. null - фото нет, frontend показывает
+            заглушку.
+          example: https://image.tmdb.org/t/p/w185/profile-3895.jpg
   responses:
     Unauthorized:
       description: Нет сессии или сессия истекла (#17094 п. 1.1, 1.3).
@@ -2038,7 +2071,7 @@ paths:
       tags: [Movies]
       summary: Карточка фильма
       description: |
-        Данные для страницы фильма: блоки 1, 3, 8, 9 #17193. По `movie_id` из выдачи поиска
+        Данные для страницы фильма: блоки 1, 3, 8, 9, 10 #17193. По `movie_id` из выдачи поиска
         frontend открывает карточку (#17241).
 
         **Доступ.** Карточка открыта гостю, поэтому `security: []`: гость видит страницу, окно
@@ -2121,8 +2154,17 @@ paths:
                       - person_id: 556
                         name: Эмма Томас
                         role: producer
+                    actors:
+                      - person_id: 10297
+                        name: Мэттью Макконахи
+                        character: Купер
+                        photo_url: https://image.tmdb.org/t/p/w185/profile-10297.jpg
+                      - person_id: 3895
+                        name: Майкл Кейн
+                        character: профессор Брэнд
+                        photo_url: https://image.tmdb.org/t/p/w185/profile-3895.jpg
                 empty:
-                  summary: Пустые состояния - нет постера, рейтинга, длительности, описания, съемочной группы
+                  summary: Пустые состояния - нет постера, рейтинга, длительности, описания, съемочной группы, актеров
                   value:
                     movie_id: 1000001
                     title: Фильм без данных
@@ -2135,6 +2177,7 @@ paths:
                     genres: []
                     countries: []
                     crew: []
+                    actors: []
         '404':
           description: >-
             Фильма с таким `movie_id` нет ни в PostgreSQL, ни в TMDB, или `movie_id` не целое
@@ -2299,4 +2342,4 @@ tags:
       последняя (#17150 п. 1.2 шаг 9). Страница проверяет токен (`POST /auth/password-reset/check`)
       и показывает форму «Новый пароль» или сообщение об истекшей ссылке (#17150 п. 2.2 шаг 2).
   - name: Movies
-    description: Карточка фильма (#17630). В Sprint 1 - блоки 1, 3, 8, 9 #17193.
+    description: Карточка фильма (#17630) - блоки 1, 3, 8, 9 #17193, актеры (блок 10) - #18844.
