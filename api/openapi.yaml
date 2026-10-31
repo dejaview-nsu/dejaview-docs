@@ -589,6 +589,76 @@ components:
             Полный URL фото на CDN TMDB, размер w185. null - фото нет, frontend показывает
             заглушку.
           example: https://image.tmdb.org/t/p/w185/profile-3895.jpg
+    MovieReviewsPage:
+      type: object
+      required: [reviews, has_more]
+      properties:
+        reviews:
+          type: array
+          maxItems: 10
+          description: >-
+            Отзывы страницы в порядке `sort`. `[]` - отзывов нет или страница за последней.
+          items:
+            $ref: '#/components/schemas/MovieReview'
+        has_more:
+          type: boolean
+          description: Есть следующая страница - frontend показывает кнопку «Еще отзывы» (#17239).
+    MovieReview:
+      type: object
+      description: Отзыв о фильме (#17239), поля - из формы отзыва #17029 п. 1 и таблицы `reviews`.
+      required: [review_id, username, created_at, is_edited, verdict, title, body, likes, dislikes]
+      properties:
+        review_id:
+          type: integer
+          format: int64
+          example: 42
+        username:
+          type: string
+          nullable: true
+          description: >-
+            Никнейм автора. null - профиль удален, frontend пишет «Удаленный пользователь»
+            (#17030 п. 3).
+          example: movie_fan_42
+        created_at:
+          type: string
+          format: date-time
+          description: >-
+            Дата создания в UTC. Вид «12 ноября 2024, 15:37» в часовом поясе пользователя собирает
+            frontend (#17239).
+          example: '2026-11-12T08:37:00Z'
+        is_edited:
+          type: boolean
+          description: Отзыв редактировался - пометка «Редактирован» рядом с датой (#17029 п. 3).
+        verdict:
+          type: string
+          enum: [positive, neutral, negative]
+          description: >-
+            «Положительно», «Нейтрально», «Негативно» (#17029 п. 1.1), подписи - на frontend.
+          example: positive
+        title:
+          type: string
+          nullable: true
+          minLength: 1
+          maxLength: 150
+          description: Заголовок (#17029 п. 1.2). null - отзыв без заголовка.
+          example: Космос, время и отцовство
+        body:
+          type: string
+          minLength: 300
+          maxLength: 10000
+          description: Текст отзыва (#17029 п. 1.3).
+        likes:
+          type: integer
+          minimum: 0
+          description: Реакций «палец вверх» (#17029 п. 5).
+          example: 12
+        dislikes:
+          type: integer
+          minimum: 0
+          description: >-
+            Реакций «палец вниз». «+N», «-N» или «0» под отзывом - разница `likes - dislikes`
+            (#17239); число реакций каждого вида - #17029 п. 5.
+          example: 3
   responses:
     Unauthorized:
       description: Нет сессии или сессия истекла (#17094 п. 1.1, 1.3).
@@ -2210,6 +2280,154 @@ paths:
                     code: MOVIE_UNAVAILABLE
                     message: Не удалось загрузить информацию о фильме. Попробуйте позже
                     field: null
+  /movies/{movie_id}/reviews:
+    get:
+      operationId: listMovieReviews
+      tags: [Reviews]
+      summary: Отзывы о фильме
+      description: |
+        Блок «Отзывы» на странице фильма (#17239, блок 13 #17193): по 10 отзывов, кнопка «Еще
+        отзывы» - следующая страница с той же сортировкой. Отзыв пишут в Sprint 5 (#17029), здесь
+        только чтение.
+
+        **Доступ.** Список открыт гостю (`security: []`). Если в запросе действующая сессия,
+        собственный отзыв пользователя в список не входит: он показывается первым отдельно
+        (#17029 п. 3), операцию для него добавит Sprint 5.
+
+        **Сортировка** (#17239), при равенстве - от новых отзывов к старым:
+
+        | `sort` | Порядок |
+        |---|---|
+        | `best`, по умолчанию | больше реакций «палец вверх» |
+        | `worst` | больше реакций «палец вниз» |
+        | `newest` | по дате создания, сначала новые |
+        | `oldest` | по дате создания, сначала старые |
+
+        Допущения: в #17239 для «Сначала худшие» правило равенства говорит о положительных
+        реакциях - читаем «негативных». «Отображаются только отзывы в порядке убывания реакций» -
+        порядок, а не фильтр: отзыв без реакций тоже в списке.
+
+        **Страницы.** `page` с 1, на странице до 10 отзывов, `has_more` - есть ли следующая.
+        Реакции между запросами могут поменяться, и на стыке страниц отзыв повторится или
+        пропадет: при числе отзывов на фильм это допустимо (допущение).
+
+        | Ситуация | HTTP | code |
+        |---|---|---|
+        | отзывы есть или их нет, в том числе фильма нет в `movies` | 200 | - |
+        | `movie_id` не целое положительное число | 404 | `MOVIE_NOT_FOUND` |
+        | `sort` не из списка или `page` не целое число от 1 | 400 | `INVALID_PARAMETER` |
+
+        Пример запроса:
+
+        ```
+        curl 'https://<host>/api/v1/movies/157336/reviews?sort=newest&page=2'
+        ```
+      security: []
+      parameters:
+        - name: movie_id
+          in: path
+          required: true
+          description: Идентификатор фильма TMDB (#17241).
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+          example: 157336
+        - name: sort
+          in: query
+          required: false
+          description: Порядок отзывов, см. описание операции.
+          schema:
+            type: string
+            enum: [best, worst, newest, oldest]
+            default: best
+        - name: page
+          in: query
+          required: false
+          description: Номер страницы по 10 отзывов, с 1.
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+      responses:
+        '200':
+          description: Страница отзывов.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MovieReviewsPage'
+              examples:
+                page:
+                  summary: Первая страница, дальше есть еще
+                  value:
+                    reviews:
+                      - review_id: 42
+                        username: movie_fan_42
+                        created_at: '2026-11-12T08:37:00Z'
+                        is_edited: false
+                        verdict: positive
+                        title: Космос, время и отцовство
+                        body: >-
+                          Нолан снова играет со временем, но на этот раз
+                          за формулами стоит простая история отца и
+                          дочери. Сцены на планете Миллер держат в
+                          напряжении, а возвращение домой к повзрослевшей
+                          Мерф - самый сильный момент фильма. Музыка
+                          Циммера с органом работает как отдельный
+                          персонаж. Минус - затянутая середина и
+                          объяснения, которые героям проговаривают слишком
+                          подробно. Смотреть обязательно на большом
+                          экране.
+                        likes: 12
+                        dislikes: 3
+                      - review_id: 17
+                        username: null
+                        created_at: '2026-11-03T19:05:00Z'
+                        is_edited: true
+                        verdict: neutral
+                        title: null
+                        body: >-
+                          Красивый фильм, но мне не хватило героев: о
+                          людях здесь говорят меньше, чем о гравитации.
+                          Первая половина про ферму и пыльные бури
+                          получилась живой и тревожной, дальше сюжет
+                          превращается в лекцию по физике с очень
+                          красивыми картинками. Финал в тессеракте одних
+                          приведет в восторг, других заставит закатить
+                          глаза. Однажды посмотреть стоит, пересматривать
+                          не тянет.
+                        likes: 0
+                        dislikes: 0
+                    has_more: true
+                empty:
+                  summary: Отзывов нет
+                  value:
+                    reviews: []
+                    has_more: false
+        '400':
+          description: '`sort` или `page` вне допустимых значений.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: INVALID_PARAMETER
+                message: Некорректный запрос
+                field: sort
+        '404':
+          description: '`movie_id` не целое положительное число.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: MOVIE_NOT_FOUND
+                message: Фильм не найден
+                field: null
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
 tags:
   - name: search
     description: Поиск фильма по изображению, видео, тексту (#17628) и аудио (#17643).
@@ -2343,3 +2561,7 @@ tags:
       и показывает форму «Новый пароль» или сообщение об истекшей ссылке (#17150 п. 2.2 шаг 2).
   - name: Movies
     description: Карточка фильма (#17630) - блоки 1, 3, 8, 9 #17193, актеры (блок 10) - #18844.
+  - name: Reviews
+    description: >-
+      Отзывы о фильме (#17239, #17029). Сейчас - список (#18845), написание, редактирование и
+      реакции - Sprint 5.
