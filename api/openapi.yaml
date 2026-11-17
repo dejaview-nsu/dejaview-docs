@@ -659,6 +659,82 @@ components:
             Реакций «палец вниз». «+N», «-N» или «0» под отзывом - разница `likes - dislikes`
             (#17239); число реакций каждого вида - #17029 п. 5.
           example: 3
+    UserListPage:
+      type: object
+      required: [movies, total]
+      properties:
+        movies:
+          type: array
+          maxItems: 24
+          description: >-
+            Фильмы страницы в порядке `sort`. `[]` - список пуст, по `q` ничего не нашлось или
+            страница за последней.
+          items:
+            $ref: '#/components/schemas/UserListMovie'
+        total:
+          type: integer
+          minimum: 0
+          description: >-
+            Сколько фильмов списка подходит под `q`, без `q` - сколько в списке всего. Число
+            страниц для пагинации и «Страница X из Y» (#17030 п. 2.4.3) - `ceil(total / 24)`.
+          example: 30
+    UserListMovie:
+      type: object
+      description: Плитка фильма в списке профиля (#17030 п. 2.2.1.1, 2.2.2.1).
+      required: [movie_id, title, poster_url, average_rating, user_rating]
+      properties:
+        movie_id:
+          type: integer
+          format: int64
+          description: >-
+            Идентификатор фильма TMDB (#17241). По нему frontend открывает карточку фильма
+            (#17030 п. 2.2.1.2).
+          example: 157336
+        title:
+          type: string
+          minLength: 1
+          description: Название на русском, как в `MovieCard.title`.
+          example: Интерстеллар
+        poster_url:
+          type: string
+          format: uri
+          nullable: true
+          description: >-
+            Полный URL постера на CDN TMDB, как в `MovieCard`. null - постера нет, frontend
+            показывает заглушку.
+          example: https://image.tmdb.org/t/p/w500/poster-157336.jpg
+        average_rating:
+          type: number
+          nullable: true
+          minimum: 1
+          maximum: 10
+          description: >-
+            Средняя оценка пользователей платформы с одним знаком после запятой (#17028,
+            `round(avg(score), 1)` по `ratings` в `contracts/db-schema.md`). null - оценок нет.
+          example: 8.6
+        user_rating:
+          type: integer
+          nullable: true
+          minimum: 1
+          maximum: 10
+          description: >-
+            Оценка текущего пользователя (#17028). null - не выставлена, на плитке кнопка
+            «Оценить» (#17030 п. 2.2.1.1.4).
+          example: 9
+    UserMovieState:
+      type: object
+      description: >-
+        Фильм у текущего пользователя - состояние блоков 6, 7 #17193 на странице фильма. Оценку
+        пользователя (блок 5, #17028) добавит ее задача новым полем: клиент игнорирует
+        незнакомые поля.
+      required: [want_to_watch, watched]
+      properties:
+        want_to_watch:
+          type: boolean
+          description: Фильм в списке «Хочу посмотреть», чекбокс установлен (#17026).
+        watched:
+          type: boolean
+          description: Фильм в списке «Просмотрено», чекбокс установлен (#17027).
   responses:
     Unauthorized:
       description: Нет сессии или сессия истекла (#17094 п. 1.1, 1.3).
@@ -767,6 +843,15 @@ components:
       description: Cookie незавершенного входа через OIDC, см. тег OIDC.
       schema:
         type: string
+    ListTypePath:
+      name: list_type
+      in: path
+      required: true
+      description: '`want_to_watch` - «Хочу посмотреть» (#17026), `watched` - «Просмотрено» (#17027).'
+      schema:
+        type: string
+        enum: [want_to_watch, watched]
+      example: want_to_watch
   headers:
     SessionSetCookie:
       description: |
@@ -2428,6 +2513,313 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
+  /users/me/lists/{list_type}:
+    get:
+      operationId: listUserMovies
+      tags: [Lists]
+      summary: Фильмы списка
+      description: |
+        Список «Хочу посмотреть» или «Просмотрено» в профиле (#17030 п. 2.2, 2.4): по 24 фильма
+        на странице, сортировка и поиск по названию. На другой странице frontend передает те же
+        `sort` и `q` (#17030 п. 2.4.4.1).
+
+        **Сортировка** (#17030 п. 2.4.6), при равенстве - от недавно добавленных к ранним:
+
+        | `sort` | Порядок |
+        |---|---|
+        | `newest`, по умолчанию | по дате добавления в список, сначала новые |
+        | `oldest` | по дате добавления, сначала старые |
+        | `title_asc` | по названию, А-Я |
+        | `title_desc` | по названию, Я-А |
+        | `best` | по `average_rating`, сначала лучшие |
+        | `worst` | по `average_rating`, сначала худшие |
+
+        Название сравнивается по правилам русского языка (`title` в `movies` - ICU `ru-RU`). Фильмы
+        без оценок в `best` и `worst` идут после оцененных (допущение).
+
+        **Поиск** (#17030 п. 2.4.7): `q` - часть названия на русском (`title`, как на плитке), без
+        учета регистра. Пробелы по краям `q` не учитываются, пустой `q` - весь список («Очистить»,
+        п. 2.4.7.4).
+
+        **Страницы.** `page` с 1, на странице до 24 фильмов (#17030 п. 2.4.2). Число страниц
+        frontend считает из `total`. Страница за последней - пустой `movies`.
+
+        | Ситуация | HTTP | code |
+        |---|---|---|
+        | фильмы есть или список пуст | 200 | - |
+        | `list_type` или `sort` не из списка, `page` не целое число от 1 | 400 | `INVALID_PARAMETER` |
+        | нет сессии или она истекла | 401 | `SESSION_REQUIRED`, `SESSION_EXPIRED` |
+
+        Пример запроса:
+
+        ```
+        curl -b 'dv_session=<id>' -G 'https://<host>/api/v1/users/me/lists/watched' \
+          -d sort=title_asc --data-urlencode 'q=матр' -d page=2
+        ```
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ListTypePath'
+        - name: sort
+          in: query
+          required: false
+          description: Порядок фильмов, см. описание операции.
+          schema:
+            type: string
+            enum: [newest, oldest, title_asc, title_desc, best, worst]
+            default: newest
+        - name: q
+          in: query
+          required: false
+          description: Часть названия фильма, см. описание операции.
+          schema:
+            type: string
+          example: матр
+        - name: page
+          in: query
+          required: false
+          description: Номер страницы по 24 фильма, с 1.
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+      responses:
+        '200':
+          description: Страница списка.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserListPage'
+              examples:
+                page:
+                  summary: Первая страница из двух, фильм без оценок
+                  value:
+                    movies:
+                      - movie_id: 157336
+                        title: Интерстеллар
+                        poster_url: https://image.tmdb.org/t/p/w500/poster-157336.jpg
+                        average_rating: 8.6
+                        user_rating: 9
+                      - movie_id: 20992
+                        title: Фильм без данных
+                        poster_url: null
+                        average_rating: null
+                        user_rating: null
+                    total: 30
+                empty:
+                  summary: Список пуст или по `q` ничего не нашлось
+                  value:
+                    movies: []
+                    total: 0
+        '400':
+          description: '`list_type`, `sort` или `page` вне допустимых значений.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: INVALID_PARAMETER
+                message: Некорректный запрос
+                field: sort
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /users/me/lists/{list_type}/{movie_id}:
+    parameters:
+      - $ref: '#/components/parameters/ListTypePath'
+      - name: movie_id
+        in: path
+        required: true
+        description: Идентификатор фильма TMDB (#17241).
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+        example: 157336
+    put:
+      operationId: addMovieToList
+      tags: [Lists]
+      summary: Добавить фильм в список
+      description: |
+        Нажатие на чекбокс «Хочу посмотреть» или «Просмотрено» на странице фильма (#17026 п. 1,
+        #17027 п. 1, блоки 6, 7 #17193). Фильм попадает в список с текущей датой добавления.
+
+        Повторное добавление ничего не меняет: дубля нет, дата добавления прежняя, ответ тот же.
+        Поэтому `PUT`: запрос можно безопасно повторить, например после входа (#17026 п. 3).
+
+        Списки независимы, фильм может быть в обоих (`contracts/db-schema.md`). Оценку фильма
+        отметка не меняет (#17027 п. 1). Добавление пишется в историю действий (`user_actions`)
+        в той же транзакции, повторное - не пишется.
+
+        Фильм должен быть в `movies`. Страница фильма загружает карточку `GET /movies/{movie_id}`,
+        а она сохраняет фильм из TMDB в `movies` (#17241), поэтому со страницы фильма 404 не бывает.
+
+        | Ситуация | HTTP | code |
+        |---|---|---|
+        | фильм добавлен или уже был в списке | 204 | - |
+        | `list_type` не из списка | 400 | `INVALID_PARAMETER` |
+        | нет сессии или она истекла | 401 | `SESSION_REQUIRED`, `SESSION_EXPIRED` |
+        | `movie_id` не целое положительное число или фильма нет в `movies` | 404 | `MOVIE_NOT_FOUND` |
+
+        Пример запроса:
+
+        ```
+        curl -X PUT -b 'dv_session=<id>' https://<host>/api/v1/users/me/lists/want_to_watch/157336
+        ```
+      security:
+        - sessionCookie: []
+      responses:
+        '204':
+          description: Фильм в списке.
+        '400':
+          description: '`list_type` не из списка.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: INVALID_PARAMETER
+                message: Некорректный запрос
+                field: list_type
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: '`movie_id` не целое положительное число или фильма нет в `movies`.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: MOVIE_NOT_FOUND
+                message: Фильм не найден
+                field: null
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      operationId: removeMovieFromList
+      tags: [Lists]
+      summary: Убрать фильм из списка
+      description: |
+        Повторное нажатие на чекбокс на странице фильма или кнопка «Удалить» у фильма в профиле
+        (#17026 п. 2, #17027 п. 2). Подтверждения нет.
+
+        Фильма в списке нет - тоже 204: результат тот же, запрос можно безопасно повторить.
+        Удаление пишется в историю действий (`user_actions`) в той же транзакции, удаление
+        отсутствующего - не пишется.
+
+        | Ситуация | HTTP | code |
+        |---|---|---|
+        | фильм удален из списка или его там не было | 204 | - |
+        | `list_type` не из списка | 400 | `INVALID_PARAMETER` |
+        | нет сессии или она истекла | 401 | `SESSION_REQUIRED`, `SESSION_EXPIRED` |
+        | `movie_id` не целое положительное число | 404 | `MOVIE_NOT_FOUND` |
+
+        Пример запроса:
+
+        ```
+        curl -X DELETE -b 'dv_session=<id>' https://<host>/api/v1/users/me/lists/want_to_watch/157336
+        ```
+      security:
+        - sessionCookie: []
+      responses:
+        '204':
+          description: Фильма в списке нет.
+        '400':
+          description: '`list_type` не из списка.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: INVALID_PARAMETER
+                message: Некорректный запрос
+                field: list_type
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: '`movie_id` не целое положительное число.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: MOVIE_NOT_FOUND
+                message: Фильм не найден
+                field: null
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /users/me/movies/{movie_id}:
+    get:
+      operationId: getUserMovieState
+      tags: [Lists]
+      summary: Фильм в списках пользователя
+      description: |
+        Состояние чекбоксов «Хочу посмотреть» и «Просмотрено» на странице фильма (блоки 6, 7
+        #17193). Frontend запрашивает его вместе с карточкой, если пользователь вошел.
+
+        Гость операцию не вызывает: у него чекбоксы не установлены, окно входа открывается только
+        по нажатию (#17026 п. 3, #17027 п. 3). Поэтому на 401 этой операции frontend окно входа не
+        открывает, а показывает чекбоксы гостя.
+
+        Отдельная операция, а не поля `MovieCard`: карточка открыта гостю и одинакова для всех, а
+        это данные пользователя.
+
+        | Ситуация | HTTP | code |
+        |---|---|---|
+        | фильм в списках или нет, в том числе фильма нет в `movies` | 200 | - |
+        | нет сессии или она истекла | 401 | `SESSION_REQUIRED`, `SESSION_EXPIRED` |
+        | `movie_id` не целое положительное число | 404 | `MOVIE_NOT_FOUND` |
+
+        Пример запроса:
+
+        ```
+        curl -b 'dv_session=<id>' https://<host>/api/v1/users/me/movies/157336
+        ```
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: movie_id
+          in: path
+          required: true
+          description: Идентификатор фильма TMDB (#17241).
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+          example: 157336
+      responses:
+        '200':
+          description: Фильм в списках пользователя.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserMovieState'
+              example:
+                want_to_watch: true
+                watched: false
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: '`movie_id` не целое положительное число.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: MOVIE_NOT_FOUND
+                message: Фильм не найден
+                field: null
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
 tags:
   - name: search
     description: Поиск фильма по изображению, видео, тексту (#17628) и аудио (#17643).
@@ -2565,3 +2957,8 @@ tags:
     description: >-
       Отзывы о фильме (#17239, #17029). Сейчас - список (#18845), написание, редактирование и
       реакции - Sprint 5.
+  - name: Lists
+    description: >-
+      Списки «Хочу посмотреть» (#17026) и «Просмотрено» (#17027): чекбоксы на странице фильма
+      (блоки 6, 7 #17193) и списки в профиле (#17030 п. 2.2, 2.4), #19128. Только для
+      пользователя, свои списки - через `/users/me` (тег Auth, «Контроль прав»).
