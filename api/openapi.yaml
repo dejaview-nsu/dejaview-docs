@@ -433,6 +433,51 @@ components:
           description: |
             `false` - учетная запись создана через OIDC и пароль не задан: в смене пароля нет
             поля «Текущий пароль» (#17150 п. 3.1).
+    UserProfile:
+      type: object
+      required: [username, birth_year, registered_at, stats]
+      properties:
+        username:
+          type: string
+          example: movie_fan_42
+        birth_year:
+          type: integer
+          minimum: 1900
+          description: Год рождения, указанный при регистрации.
+          example: 1998
+        registered_at:
+          type: string
+          format: date-time
+          description: Дата и время регистрации в UTC.
+          example: '2026-09-28T12:00:00Z'
+        stats:
+          type: object
+          required: [watched_count, ratings_count, average_rating, reviews_count]
+          properties:
+            watched_count:
+              type: integer
+              format: int64
+              minimum: 0
+              description: Число фильмов в списке «Просмотрено».
+              example: 12
+            ratings_count:
+              type: integer
+              format: int64
+              minimum: 0
+              description: Число оценок пользователя.
+              example: 2
+            average_rating:
+              type: number
+              minimum: 0
+              maximum: 10
+              description: Среднее арифметическое оценок пользователя, 0 при отсутствии оценок.
+              example: 8.5
+            reviews_count:
+              type: integer
+              format: int64
+              minimum: 0
+              description: Число отзывов пользователя.
+              example: 0
     MovieCard:
       type: object
       description: >-
@@ -2162,6 +2207,60 @@ paths:
                     field: new_password
         '410':
           $ref: '#/components/responses/AuthResetLinkExpired'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /users/me:
+    get:
+      tags: [Auth]
+      operationId: getUserProfile
+      summary: Профиль текущего пользователя
+      description: |
+        Основная информация и статистика профиля (#19129, #17030 п. 2.1 и 2.3).
+        Владелец профиля определяется по cookie `dv_session`. Параметров и тела запроса нет.
+        Без cookie возвращается `401 SESSION_REQUIRED`. Если сессия истекла, завершена или
+        не найдена, возвращается `401 SESSION_EXPIRED`, а cookie удаляется.
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Профиль владельца сессии.
+          headers:
+            Cache-Control:
+              description: Запрещает кешировать личные данные профиля.
+              schema:
+                type: string
+                enum: [no-store]
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+              examples:
+                empty_profile:
+                  summary: Профиль без просмотренных фильмов, оценок и отзывов
+                  value:
+                    username: movie_fan_42
+                    birth_year: 1998
+                    registered_at: '2026-09-28T12:00:00Z'
+                    stats:
+                      watched_count: 0
+                      ratings_count: 0
+                      average_rating: 0
+                      reviews_count: 0
+                watched_movies:
+                  summary: Профиль с просмотренными фильмами
+                  value:
+                    username: movie_fan_42
+                    birth_year: 1998
+                    registered_at: '2026-09-28T12:00:00Z'
+                    stats:
+                      watched_count: 12
+                      ratings_count: 0
+                      average_rating: 0
+                      reviews_count: 0
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
