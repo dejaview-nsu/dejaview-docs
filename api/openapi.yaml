@@ -661,6 +661,12 @@ components:
         has_more:
           type: boolean
           description: Есть следующая страница - frontend показывает кнопку «Еще отзывы» (#17239).
+        own_review:
+          allOf:
+            - $ref: '#/components/schemas/MovieReview'
+          description: >-
+            Собственный отзыв при действующей сессии, если он есть. Возвращается только на первой
+            странице и отображается перед массивом reviews при любой сортировке.
     MovieReview:
       type: object
       description: Отзыв о фильме (#17239), поля - из формы отзыва #17029 п. 1 и таблицы `reviews`.
@@ -717,6 +723,57 @@ components:
             Реакций «палец вниз». «+N», «-N» или «0» под отзывом - разница `likes - dislikes`
             (#17239); число реакций каждого вида - #17029 п. 5.
           example: 3
+    ReviewFields:
+      type: object
+      properties:
+        verdict:
+          type: string
+          enum: [positive, neutral, negative]
+        title:
+          type: string
+          nullable: true
+          maxLength: 150
+          pattern: '^[^\u0000]*$'
+          description: Пустая строка и null означают отсутствие заголовка.
+        body:
+          type: string
+          minLength: 300
+          maxLength: 10000
+          pattern: '^[^\u0000]*$'
+    CreateReviewRequest:
+      allOf:
+        - $ref: '#/components/schemas/ReviewFields'
+        - type: object
+          required: [verdict, body]
+    UpdateReviewRequest:
+      allOf:
+        - $ref: '#/components/schemas/ReviewFields'
+        - type: object
+          anyOf:
+            - required: [verdict]
+            - required: [title]
+            - required: [body]
+    MyReviewsPage:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          maxItems: 24
+          items:
+            $ref: '#/components/schemas/MyReviewItem'
+        total:
+          type: integer
+          minimum: 0
+          description: Число отзывов с учётом поиска. Число страниц равно ceil(total / 24).
+    MyReviewItem:
+      type: object
+      required: [movie, review]
+      properties:
+        movie:
+          $ref: '#/components/schemas/UserListMovie'
+        review:
+          $ref: '#/components/schemas/MovieReview'
     UserListPage:
       type: object
       required: [movies, total]
@@ -2588,12 +2645,13 @@ paths:
       summary: Отзывы о фильме
       description: |
         Блок «Отзывы» на странице фильма (#17239, блок 13 #17193): по 10 отзывов, кнопка «Еще
-        отзывы» - следующая страница с той же сортировкой. Отзыв пишут в Sprint 5 (#17029), здесь
-        только чтение.
+        отзывы» - следующая страница с той же сортировкой.
 
-        **Доступ.** Список открыт гостю (`security: []`). Если в запросе действующая сессия,
-        собственный отзыв пользователя в список не входит: он показывается первым отдельно
-        (#17029 п. 3), операцию для него добавит Sprint 5.
+        **Доступ.** Список открыт гостю. Недействительная cookie обрабатывается как гостевой запрос.
+        Если в запросе действующая сессия,
+        собственный отзыв исключён из `reviews` на всех страницах. На первой странице он
+        возвращается в поле `own_review`, если существует, и отображается первым (#17029 п. 3).
+        Ответ зависит от cookie сессии и содержит `Cache-Control: no-store`.
 
         **Сортировка** (#17239), при равенстве - от новых отзывов к старым:
 
@@ -2608,7 +2666,8 @@ paths:
         реакциях - читаем «негативных». «Отображаются только отзывы в порядке убывания реакций» -
         порядок, а не фильтр: отзыв без реакций тоже в списке.
 
-        **Страницы.** `page` с 1, на странице до 10 отзывов, `has_more` - есть ли следующая.
+        **Страницы.** `page` с 1, в `reviews` до 10 отзывов. `has_more` относится только к `reviews`.
+        `own_review` на первой странице возвращается сверх лимита массива.
         Реакции между запросами могут поменяться, и на стыке страниц отзыв повторится или
         пропадет: при числе отзывов на фильм это допустимо (допущение).
 
@@ -2622,8 +2681,11 @@ paths:
 
         ```
         curl 'https://<host>/api/v1/movies/157336/reviews?sort=newest&page=2'
+        curl --cookie 'dv_session=<token>' 'https://<host>/api/v1/movies/157336/reviews'
         ```
-      security: []
+      security:
+        - {}
+        - sessionCookie: []
       parameters:
         - name: movie_id
           in: path
@@ -2645,14 +2707,21 @@ paths:
         - name: page
           in: query
           required: false
-          description: Номер страницы по 10 отзывов, с 1.
+          description: Номер страницы массива reviews, с 1.
           schema:
             type: integer
+            format: int32
             minimum: 1
+            maximum: 2147483647
             default: 1
       responses:
         '200':
           description: Страница отзывов.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum: [no-store]
           content:
             application/json:
               schema:
@@ -2725,6 +2794,217 @@ paths:
                 code: MOVIE_NOT_FOUND
                 message: Фильм не найден
                 field: null
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      operationId: createMovieReview
+      tags: [Reviews]
+      summary: Опубликовать отзыв о фильме
+      description: |
+        Один отзыв на фильм от пользователя (#17029). Вердикт обязателен. Длины измеряются
+        в кодовых точках Unicode. U+0000 не поддерживается хранилищем.
+        У нового отзыва нет реакций, `is_edited` равно false.
+        Тело запроса принимается с типом `application/json`.
+        Требуется cookie `dv_session`. Отсутствующая сессия даёт `SESSION_REQUIRED`,
+        недействительная или истёкшая — `SESSION_EXPIRED`.
+        Сессия, идентификатор и тело проверяются в этом порядке до поиска фильма и дубликата.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: movie_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReviewRequest'
+      responses:
+        '201':
+          description: Отзыв опубликован.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MovieReview'
+        '400':
+          description: Некорректное тело запроса, код `VALIDATION_ERROR`. Поле `field` указывает на ошибочное поле, если оно известно.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Фильм не найден в каталоге либо идентификатор некорректен, код `MOVIE_NOT_FOUND`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: У пользователя уже есть отзыв о фильме, код `REVIEW_ALREADY_EXISTS`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /reviews/{review_id}:
+    parameters:
+      - name: review_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+    patch:
+      operationId: updateMyReview
+      tags: [Reviews]
+      summary: Редактировать свой отзыв
+      description: |
+        Передайте хотя бы одно поле. Меняются только переданные поля.
+        Тело запроса принимается с типом `application/json`.
+        Отправьте `title` со значением null или пустой строкой,
+        чтобы удалить заголовок. Длины измеряются в кодовых точках Unicode.
+        U+0000 не поддерживается хранилищем. Дата публикации сохраняется, `is_edited` становится true.
+        Редактирование доступно только автору с действующей сессией.
+        Сессия, идентификатор и тело проверяются в этом порядке до поиска отзыва и проверки автора.
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateReviewRequest'
+            example:
+              title: null
+      responses:
+        '200':
+          description: Отзыв сохранён.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MovieReview'
+        '400':
+          description: Некорректное тело запроса, код `VALIDATION_ERROR`. Поле `field` указывает на ошибочное поле, если оно известно.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Отзыв принадлежит другому пользователю или автор удалён, код `REVIEW_NOT_OWNER`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Отзыв не найден либо идентификатор некорректен, код `REVIEW_NOT_FOUND`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      operationId: deleteMyReview
+      tags: [Reviews]
+      summary: Удалить свой отзыв
+      description: Только для автора с действующей сессией. После удаления можно опубликовать новый отзыв о фильме.
+      security:
+        - sessionCookie: []
+      responses:
+        '204':
+          description: Отзыв удалён.
+        '403':
+          description: Отзыв принадлежит другому пользователю или автор удалён, код `REVIEW_NOT_OWNER`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Отзыв не найден либо идентификатор некорректен, код `REVIEW_NOT_FOUND`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /users/me/reviews:
+    get:
+      operationId: listMyReviews
+      tags: [Reviews]
+      summary: Мои отзывы
+      description: |
+        Отзывы владельца сессии с плитками соответствующих фильмов (#17030 п. 2.3.6, 2.4).
+        Общее число отзывов без фильтра также доступно в `stats.reviews_count` ответа `GET /users/me`.
+        Сортировки `newest` и `oldest` используют дату публикации, `title_asc` и
+        `title_desc` — название фильма, `best` и `worst` — среднюю оценку фильма.
+        При сортировке по оценке фильмы без оценок идут последними. При равных названии или
+        оценке первыми идут свежие отзывы. При равной дате порядок определяется по ID отзыва
+        (по возрастанию для `oldest`, по убыванию для остальных).
+        Страница за последней содержит пустой массив и общее число совпадений.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [newest, oldest, title_asc, title_desc, best, worst]
+            default: newest
+        - name: q
+          in: query
+          description: Часть русского названия без учёта регистра. Требуется UTF-8 без U+0000. Пробелы по краям отбрасываются.
+          schema:
+            type: string
+          example: матр
+        - name: page
+          in: query
+          description: Номер страницы по 24 отзыва, с 1.
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 2147483647
+            default: 1
+      responses:
+        '200':
+          description: Страница отзывов пользователя.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum: [no-store]
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MyReviewsPage'
+        '400':
+          description: Некорректный `sort`, `q` или `page`, код `INVALID_PARAMETER`. Поле `field` содержит имя параметра.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -3236,8 +3516,8 @@ tags:
     description: Числовые оценки фильмов и список «Мои оценки» (#17028, #17030, #19483).
   - name: Reviews
     description: >-
-      Отзывы о фильме (#17239, #17029). Сейчас - список (#18845), написание, редактирование и
-      реакции - Sprint 5.
+      Публикация, редактирование и удаление отзывов (#17029, #19484), список отзывов фильма
+      (#17239) и список «Мои отзывы» в профиле (#17030).
   - name: Lists
     description: >-
       Списки «Хочу посмотреть» (#17026) и «Просмотрено» (#17027): чекбоксы на странице фильма
