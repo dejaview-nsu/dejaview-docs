@@ -481,13 +481,13 @@ components:
     MovieCard:
       type: object
       description: >-
-        Карточка фильма для блоков 1, 3, 8, 9, 10 #17193. Поля и их пустые значения совпадают с
+        Карточка фильма для блоков 1, 3, 5, 8, 9, 10 #17193. Поля фильма и их пустые значения совпадают с
         таблицей `movies` (#17627, `contracts/db-schema.md`), кроме `poster_url`: в БД лежит
         `poster_path`, полный URL собирает backend, как и у фото актеров. Пустое значение - `null`
-        у скалярных полей и `[]` у списков, пустых строк нет. Остальные блоки (трейлер, актеры
-        дубляжа, оценки, отзывы) добавятся новыми полями или операциями: клиент игнорирует
-        незнакомые поля.
-      required: [movie_id, title, original_title, year, age_rating, poster_url, runtime_min, overview, genres, countries, crew, actors]
+        у скалярных полей и `[]` у списков, пустых строк нет. Среднее и число оценок для блока 5
+        считаются по `ratings`. Клиент игнорирует незнакомые поля. Остальные блоки можно добавить
+        новыми полями или операциями.
+      required: [movie_id, title, original_title, year, age_rating, poster_url, runtime_min, overview, genres, countries, crew, actors, average_rating, ratings_count]
       properties:
         movie_id:
           type: integer
@@ -567,6 +567,19 @@ components:
             скрипт каталога (#17640). `[]` - данных нет, frontend блок не показывает.
           items:
             $ref: '#/components/schemas/MovieActor'
+        average_rating:
+          type: number
+          nullable: true
+          minimum: 1
+          maximum: 10
+          description: Среднее всех оценок фильма, округлённое до одного знака. null при отсутствии оценок.
+          example: 8.6
+        ratings_count:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Число оценок фильма, включая сохранённые оценки удалённых пользователей.
+          example: 5
     MovieGenre:
       type: object
       required: [id, name]
@@ -725,7 +738,7 @@ components:
           example: 30
     UserListMovie:
       type: object
-      description: Плитка фильма в списке профиля (#17030 п. 2.2.1.1, 2.2.2.1).
+      description: Плитка фильма в списке профиля (#17030 п. 2.2.1.1, 2.2.2.1, 2.3.4.1).
       required: [movie_id, title, poster_url, average_rating, user_rating]
       properties:
         movie_id:
@@ -768,11 +781,8 @@ components:
           example: 9
     UserMovieState:
       type: object
-      description: >-
-        Фильм у текущего пользователя - состояние блоков 6, 7 #17193 на странице фильма. Оценку
-        пользователя (блок 5, #17028) добавит ее задача новым полем: клиент игнорирует
-        незнакомые поля.
-      required: [want_to_watch, watched]
+      description: Оценка и состояние списков текущего пользователя на странице фильма (блоки 5–7 #17193).
+      required: [want_to_watch, watched, user_rating]
       properties:
         want_to_watch:
           type: boolean
@@ -780,6 +790,13 @@ components:
         watched:
           type: boolean
           description: Фильм в списке «Просмотрено», чекбокс установлен (#17027).
+        user_rating:
+          type: integer
+          nullable: true
+          minimum: 1
+          maximum: 10
+          description: Оценка текущего пользователя. null, если оценки нет.
+          example: 9
   responses:
     Unauthorized:
       description: Нет сессии или сессия истекла (#17094 п. 1.1, 1.3).
@@ -2325,12 +2342,13 @@ paths:
       tags: [Movies]
       summary: Карточка фильма
       description: |
-        Данные для страницы фильма: блоки 1, 3, 8, 9, 10 #17193. По `movie_id` из выдачи поиска
+        Данные для блоков 1, 3, 5, 8, 9, 10 страницы фильма (#17193). По `movie_id` из выдачи поиска
         frontend открывает карточку (#17241).
 
         **Доступ.** Карточка открыта гостю, поэтому `security: []`: гость видит страницу, окно
         входа открывается только на действие - оценку, списки, отзыв (#17193 блоки 5, 6, 7, 12).
-        Эти действия в Sprint 1 не описываются (#17630 п. 6).
+        Средняя оценка и число оценок видны гостю. Собственная оценка доступна через
+        `GET /users/me/movies/{movie_id}`.
 
         **Источник.** Backend берет фильм из PostgreSQL (кеш TMDB, #17393 п. 2). Фильма там нет -
         запрашивает TMDB по `movie_id`, сохраняет в `movies` и отдает карточку (#17241). TMDB
@@ -2417,6 +2435,8 @@ paths:
                         name: Майкл Кейн
                         character: профессор Брэнд
                         photo_url: https://image.tmdb.org/t/p/w185/profile-3895.jpg
+                    average_rating: 8.6
+                    ratings_count: 5
                 empty:
                   summary: Пустые состояния - нет постера, рейтинга, длительности, описания, съемочной группы, актеров
                   value:
@@ -2432,6 +2452,8 @@ paths:
                     countries: []
                     crew: []
                     actors: []
+                    average_rating: null
+                    ratings_count: 0
         '404':
           description: >-
             Фильма с таким `movie_id` нет ни в PostgreSQL, ни в TMDB, или `movie_id` не целое
@@ -2464,6 +2486,101 @@ paths:
                     code: MOVIE_UNAVAILABLE
                     message: Не удалось загрузить информацию о фильме. Попробуйте позже
                     field: null
+  /movies/{movie_id}/rating:
+    parameters:
+      - name: movie_id
+        in: path
+        required: true
+        description: Идентификатор фильма TMDB (#17241).
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+        example: 157336
+    put:
+      operationId: setMovieRating
+      tags: [Ratings]
+      summary: Поставить или изменить свою оценку
+      description: |
+        Сохраняет одну оценку фильма от текущего пользователя (#17028 п. 1–2). Новый балл
+        заменяет прежний. Повтор с тем же баллом сохраняет оценку и дату её создания.
+        Фильм должен быть в `movies`. Открытие карточки добавляет его туда при необходимости.
+        После успешной записи клиент перечитывает карточку и состояние фильма у пользователя.
+        Сначала проверяется сессия, затем формат `movie_id`, тело и наличие фильма в `movies`.
+        Дополнительные поля тела игнорируются. Дробная часть балла должна быть нулевой.
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [score]
+              properties:
+                score:
+                  type: integer
+                  minimum: 1
+                  maximum: 10
+                  example: 9
+      responses:
+        '204':
+          description: Оценка сохранена.
+        '400':
+          description: Некорректное тело или балл вне целого диапазона 1–10.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: INVALID_PARAMETER
+                message: Оценка должна быть целым числом от 1 до 10
+                field: score
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Фильма нет в `movies` или некорректен идентификатор.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: MOVIE_NOT_FOUND
+                message: Фильм не найден
+                field: null
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      operationId: removeMovieRating
+      tags: [Ratings]
+      summary: Удалить свою оценку
+      description: |
+        Удаляет оценку текущего пользователя (#17028 п. 3). Для существующего фильма без своей
+        оценки также возвращается 204. После удаления клиент перечитывает карточку и состояние
+        фильма у пользователя.
+      security:
+        - sessionCookie: []
+      responses:
+        '204':
+          description: У текущего пользователя нет оценки этого фильма.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Фильма нет в `movies` или некорректен идентификатор.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: MOVIE_NOT_FOUND
+                message: Фильм не найден
+                field: null
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /movies/{movie_id}/reviews:
     get:
       operationId: listMovieReviews
@@ -2612,6 +2729,65 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
+  /users/me/ratings:
+    get:
+      operationId: listUserRatings
+      tags: [Ratings]
+      summary: Мои оценки
+      description: |
+        Фильмы, которые оценил текущий пользователь (#17030 п. 2.3.4, 2.4).
+        Формат плиток, поиск по названию и страницы по 24 фильма совпадают со списками профиля.
+        Сортировки `newest` и `oldest` используют дату первой записи текущей оценки. Сортировки
+        `best` и `worst` используют среднюю оценку фильма. При равенстве сначала идут недавние оценки.
+        Страница за последней возвращает пустой `movies` и число всех совпадений в `total`.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: sort
+          in: query
+          description: Порядок фильмов, по умолчанию сначала недавно оценённые.
+          schema:
+            type: string
+            enum: [newest, oldest, title_asc, title_desc, best, worst]
+            default: newest
+        - name: q
+          in: query
+          description: Часть русского названия без учёта регистра. Пробелы по краям отбрасываются.
+          schema:
+            type: string
+          example: матр
+        - name: page
+          in: query
+          description: Номер страницы по 24 фильма, с 1.
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 2147483647
+            default: 1
+      responses:
+        '200':
+          description: Страница оценённых фильмов.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserListPage'
+        '400':
+          description: Некорректный `sort` или `page`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: INVALID_PARAMETER
+                message: Некорректный запрос
+                field: sort
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /users/me/lists/{list_type}:
     get:
       operationId: listUserMovies
@@ -2646,7 +2822,7 @@ paths:
         | Ситуация | HTTP | code |
         |---|---|---|
         | фильмы есть или список пуст | 200 | - |
-        | `list_type` или `sort` не из списка, `page` не целое число от 1 | 400 | `INVALID_PARAMETER` |
+        | `list_type` или `sort` не из списка, `page` не целое число от 1 до 2147483647 | 400 | `INVALID_PARAMETER` |
         | нет сессии или она истекла | 401 | `SESSION_REQUIRED`, `SESSION_EXPIRED` |
 
         Пример запроса:
@@ -2680,7 +2856,9 @@ paths:
           description: Номер страницы по 24 фильма, с 1.
           schema:
             type: integer
+            format: int32
             minimum: 1
+            maximum: 2147483647
             default: 1
       responses:
         '200':
@@ -2858,10 +3036,11 @@ paths:
     get:
       operationId: getUserMovieState
       tags: [Lists]
-      summary: Фильм в списках пользователя
+      summary: Оценка и списки пользователя для фильма
       description: |
         Состояние чекбоксов «Хочу посмотреть» и «Просмотрено» на странице фильма (блоки 6, 7
-        #17193). Frontend запрашивает его вместе с карточкой, если пользователь вошел.
+        #17193) и собственная оценка пользователя (блок 5). Frontend запрашивает эти данные
+        вместе с карточкой, если пользователь вошел.
 
         Гость операцию не вызывает: у него чекбоксы не установлены, окно входа открывается только
         по нажатию (#17026 п. 3, #17027 п. 3). Поэтому на 401 этой операции frontend окно входа не
@@ -2895,7 +3074,7 @@ paths:
           example: 157336
       responses:
         '200':
-          description: Фильм в списках пользователя.
+          description: Состояние списков и собственная оценка пользователя.
           content:
             application/json:
               schema:
@@ -2903,6 +3082,7 @@ paths:
               example:
                 want_to_watch: true
                 watched: false
+                user_rating: 9
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -3051,7 +3231,9 @@ tags:
       последняя (#17150 п. 1.2 шаг 9). Страница проверяет токен (`POST /auth/password-reset/check`)
       и показывает форму «Новый пароль» или сообщение об истекшей ссылке (#17150 п. 2.2 шаг 2).
   - name: Movies
-    description: Карточка фильма (#17630) - блоки 1, 3, 8, 9 #17193, актеры (блок 10) - #18844.
+    description: Карточка фильма (#17630) - блоки 1, 3, 8, 9 #17193, актёры (блок 10) и оценки (блок 5).
+  - name: Ratings
+    description: Числовые оценки фильмов и список «Мои оценки» (#17028, #17030, #19483).
   - name: Reviews
     description: >-
       Отзывы о фильме (#17239, #17029). Сейчас - список (#18845), написание, редактирование и
